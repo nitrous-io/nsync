@@ -1,0 +1,13 @@
+{
+	"ImportPath": "github.com/nitrous-io/nsync",
+	"GoVersion": "go1.5.1",
+	"Packages": [
+		"./..."
+	],
+	"Deps": [
+		{
+			"ImportPath": "github.com/rjeczalik/notify",
+			"Rev": "bd6da98556acc4e2dd816891bffd4af7dfce1403"
+		}
+	]
+}
