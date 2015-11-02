@@ -1,4 +1,5 @@
 dist/
+tmp/
 
 config.json
 .vendor
@@ -23,6 +24,7 @@ _test/
 _vendor/
 build/
 release/
+tmp/
 
 # Architecture specific extensions/prefixes
 *.[568vq]

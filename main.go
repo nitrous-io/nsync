@@ -13,14 +13,14 @@ func main() {
 		os.Exit(1)
 	}
 
-	token, pathToWatch, containerSlug, remotePath := os.Args[1], os.Args[2], os.Args[3], os.Args[4]
+	token, localPath, containerSlug, remotePath := os.Args[1], os.Args[2], os.Args[3], os.Args[4]
 
-	fmt.Println(token, pathToWatch, containerSlug, remotePath)
+	fmt.Println(token, localPath, containerSlug, remotePath)
 
-	pathToWatch = "/Users/jihoon/workspace/nsync-test-141337"
+	localPath = "/Users/jihoon/workspace/nsync-test-141337"
 	containerSlug = "nsync-test-141337"
 	remotePath = "code"
 
-	ns := nsync.NewNsync(token, pathToWatch, containerSlug, remotePath)
+	ns := nsync.NewNsync(token, localPath, containerSlug, remotePath)
 	ns.Start()
 }
