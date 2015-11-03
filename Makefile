@@ -5,11 +5,22 @@ WARN_COLOR=\x1b[33;01m
 
 export ROOTDIR=$(CURDIR)
 
-all:
+all: osx windows linux
+
+osx:
 	@mkdir -p dist/
-	@echo "$(OK_COLOR)--> Compiling...$(NO_COLOR)"
+	@echo "$(OK_COLOR)--> Compiling for OSX...$(NO_COLOR)"
 	go build -v -o dist/nsync
-	@cp -a bin dist
+
+windows:
+	@mkdir -p dist/
+	@echo "$(OK_COLOR)--> Compiling for Windows (win32)...$(NO_COLOR)"
+	GOARCH=386 GOOS=windows go build -v -o dist/nsync.exe
+
+linux:
+	@mkdir -p dist/
+	@echo "$(OK_COLOR)--> Compiling for Linux (amd64)...$(NO_COLOR)"
+	GOARCH=amd64 GOOS=linux go build -v -o dist/nsync-linux
 
 deps:
 	go get -d -v ./...
@@ -23,4 +34,4 @@ test:
 		{{end}}' ./... | xargs -n1 go get -d
 	go test ./...
 
-.PHONY: all format test deps
+.PHONY: all osx windows linux format test deps

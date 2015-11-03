@@ -5,7 +5,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
-	"path"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -14,6 +14,7 @@ import (
 	"github.com/kardianos/osext"
 	"github.com/nitrous-io/nsync/pkg/envmap"
 	"github.com/nitrous-io/nsync/pkg/pathmatch"
+	"github.com/nitrous-io/nsync/pkg/shortname"
 	"github.com/rjeczalik/notify"
 )
 
@@ -28,20 +29,24 @@ const fileSyncDelay = 100 * time.Millisecond
 
 func init() {
 	if runtime.GOOS == "darwin" {
-		unisonExePath = path.Join(exeFolderPath, "bin", "osx64", "nitrous-unison")
-		sshExePath = path.Join(exeFolderPath, "bin", "osx64", "nitrous-ssh")
+		unisonExePath = filepath.Join(exeFolderPath, "bin", "osx64", "nitrous-unison")
+		sshExePath = filepath.Join(exeFolderPath, "bin", "osx64", "nitrous-ssh")
 	} else if runtime.GOOS == "linux" && runtime.GOARCH == "amd64" {
-		unisonExePath = path.Join(exeFolderPath, "bin", "lin64", "nitrous-unison")
-		sshExePath = path.Join(exeFolderPath, "bin", "lin64", "nitrous-unison")
+		unisonExePath = filepath.Join(exeFolderPath, "bin", "lin64", "nitrous-unison")
+		sshExePath = filepath.Join(exeFolderPath, "bin", "lin64", "nitrous-unison")
 	} else if runtime.GOOS == "windows" {
-		unisonExePath = path.Join(exeFolderPath, "bin", "win32", "nitrous-unison.exe")
-		sshExePath = path.Join(exeFolderPath, "bin", "win32", "nitrous-ssh.exe")
-
-		for i, p := range ignorePathList {
-			ignorePathList[i] = strings.Replace(p, "/", string(os.PathSeparator), -1)
+		unisonExePath = filepath.Join(exeFolderPath, "bin", "win32", "nitrous-unison.exe")
+		var err error
+		sshExePath, err = shortname.Get(filepath.Join(exeFolderPath, "bin", "win32", "nitrous-ssh.exe"))
+		if err != nil {
+			panic(err)
 		}
 	} else {
 		panic(fmt.Sprintf("Unsupported platform: %s-%s!", runtime.GOOS, runtime.GOARCH))
+	}
+
+	for i, p := range ignorePathList {
+		ignorePathList[i] = filepath.Join(strings.Split(p, "/")...)
 	}
 }
 
@@ -53,10 +58,14 @@ func mustString(s string, err error) string {
 }
 
 type Nsync struct {
-	Token         string
-	LocalPath     string
-	ContainerSlug string
-	RemotePath    string
+	token             string
+	nitrousFolderPath string
+	containerSlug     string
+	remotePath        string
+	sshKeyPath        string
+
+	sshUrl   string
+	hostSlug string
 
 	dirty       bool
 	syncingLock sync.Mutex
@@ -65,22 +74,57 @@ type Nsync struct {
 	shouldIgnoreArchives bool
 	shouldIgnoreLocks    bool
 
-	failCount int
-	lastError error
+	lastError        error
+	lastErrorDetails string
+	errorIsFatal     bool
+	retryDelay       time.Duration
+
+	lastTransferCount int
 }
 
-func NewNsync(token, pathToWatch, containerSlug, remotePath string) *Nsync {
-	return &Nsync{
-		Token:         token,
-		LocalPath:     pathToWatch,
-		ContainerSlug: containerSlug,
-		RemotePath:    remotePath,
+func NewNsync(token, nitrousFolderPath, containerSlug, remotePath string) *Nsync {
+	ns := &Nsync{
+		token:             token,
+		nitrousFolderPath: nitrousFolderPath,
+		containerSlug:     containerSlug,
+		remotePath:        remotePath,
 	}
+
+	username, err := ns.getUsername()
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println("username obtained: ", username)
+
+	ns.sshKeyPath = filepath.Join(nitrousFolderPath, "SSH Keys", username, "id_rsa")
+
+	hostId, sshUrl, err := ns.getContainerInfo(ns.containerSlug)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println("host id obtained: ", hostId)
+	fmt.Println("SSH URL obtained: ", sshUrl)
+	ns.sshUrl = sshUrl
+
+	hostSlug, _, err := ns.getHostInfo(hostId)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println("host slug obtained: ", hostSlug)
+	ns.hostSlug = hostSlug
+
+	return ns
+}
+
+func (ns *Nsync) makeLocalPath() string {
+	return filepath.Join(ns.nitrousFolderPath, ns.hostSlug, ns.containerSlug)
 }
 
 func (ns *Nsync) Start() {
-	if _, err := os.Stat(ns.LocalPath); os.IsNotExist(err) {
-		if err := os.MkdirAll(ns.LocalPath, 0700); err != nil {
+	localPath := ns.makeLocalPath()
+
+	if _, err := os.Stat(localPath); os.IsNotExist(err) {
+		if err := os.MkdirAll(localPath, 0700); err != nil {
 			panic(err)
 		}
 
@@ -90,7 +134,6 @@ func (ns *Nsync) Start() {
 	var timer *time.Timer
 
 	runSync := func() {
-		timer = nil
 		ns.syncingLock.Lock()
 		if ns.syncing {
 			ns.dirty = true
@@ -110,8 +153,8 @@ func (ns *Nsync) Start() {
 
 	fsC := make(chan notify.EventInfo, 1000)
 
-	fmt.Printf("Watching %s...\n", ns.LocalPath)
-	if err := notify.Watch(path.Join(ns.LocalPath, "..."), fsC, notify.All); err != nil {
+	fmt.Printf("Watching %s...\n", localPath)
+	if err := notify.Watch(filepath.Join(localPath, "..."), fsC, notify.All); err != nil {
 		log.Fatal(err)
 	}
 	defer notify.Stop(fsC)
@@ -135,7 +178,12 @@ func (ns *Nsync) Start() {
 }
 
 func (ns *Nsync) performSync() {
-	fmt.Println("Sync begin...")
+	log.Println("Sync begin...")
+	ns.lastError = nil
+	ns.lastErrorDetails = ""
+	ns.errorIsFatal = false
+	ns.retryDelay = 10 * time.Second
+	ns.dirty = false
 
 	cmd := ns.unisonCmd()
 	out, err := cmd.CombinedOutput()
@@ -144,25 +192,35 @@ func (ns *Nsync) performSync() {
 	fmt.Println(outStr)
 
 	if err != nil {
-		ns.failCount++
 		ns.lastError = err
-		fmt.Println("Sync failed!")
 	}
 
-	fmt.Println("Sync end!")
+	ns.handleOutput(outStr)
+
+	if ns.lastError != nil {
+		log.Printf("Error occurred: %v", ns.lastError)
+
+		if ns.errorIsFatal {
+			log.Fatal("Error is fatal! Exiting!")
+		}
+
+		time.AfterFunc(ns.retryDelay, func() {
+			log.Println("Retrying...")
+			ns.performSync()
+		})
+	}
+
+	log.Println("Sync end!")
+
 	if ns.dirty {
-		fmt.Println("changes happened while syncing, syncing again...")
-		ns.dirty = false
+		log.Println("changes happened while syncing, syncing again...")
 		ns.performSync()
 	}
 }
 
-type unisonCmdOptions struct {
-}
-
 func (ns *Nsync) unisonCmd() *exec.Cmd {
-	sshRemotePath := fmt.Sprintf("ssh://nitrous@pete-4644.nitrouspro.com:32839/%s", ns.RemotePath)
-	sshKeyPath := "/Users/jihoon/workspace/go/src/github.com/nitrous-io/nsync/tmp/id_rsa"
+	localPath := ns.makeLocalPath()
+	sshRemotePath := fmt.Sprintf("%s/%s", ns.sshUrl, ns.remotePath)
 
 	var devNull string
 	if isWindows {
@@ -171,15 +229,26 @@ func (ns *Nsync) unisonCmd() *exec.Cmd {
 		devNull = "/dev/null"
 	}
 
+	var sshKeyPathEscaped string
+	if isWindows {
+		var err error
+		sshKeyPathEscaped, err = shortname.Get(ns.sshKeyPath)
+		if err != nil {
+			panic(err)
+		}
+	} else {
+		sshKeyPathEscaped = strings.Replace(strings.Replace(ns.sshKeyPath, `\`, `\\`, -1), " ", `\ `, -1)
+	}
+
 	sshArgs := []string{
 		fmt.Sprintf("-o UserKnownHostsFile=%s", devNull),
 		"-o StrictHostKeyChecking=no",
 		"-o PreferredAuthentications=publickey",
-		fmt.Sprintf("-i %s", sshKeyPath),
+		fmt.Sprintf("-i %s", sshKeyPathEscaped),
 	}
 
 	args := []string{
-		ns.LocalPath,             // path to watch
+		localPath,                // path to watch
 		sshRemotePath,            // ssh remote path
 		"-prefer", sshRemotePath, // prefer server's copy when there is a conflict
 		"-ui=text",             // CLI mode
@@ -198,7 +267,9 @@ func (ns *Nsync) unisonCmd() *exec.Cmd {
 		"-ignorecase=true",
 	}
 
-	if _, err := os.Stat(ns.LocalPath); os.IsNotExist(err) || ns.shouldIgnoreArchives {
+	fmt.Printf("should ignore archives: %v\n", ns.shouldIgnoreArchives)
+
+	if _, err := os.Stat(localPath); os.IsNotExist(err) || ns.shouldIgnoreArchives {
 		ns.shouldIgnoreArchives = false
 		args = append(args, "-ignorearchives")
 	}
@@ -213,7 +284,7 @@ func (ns *Nsync) unisonCmd() *exec.Cmd {
 	cmd := exec.Command(unisonExePath, args...)
 
 	env := envmap.EnvToMap(os.Environ())
-	env["UNISON"] = path.Join(ns.LocalPath, ".unison")
+	env["UNISON"] = filepath.Join(localPath, ".unison")
 
 	cmd.Env = append(cmd.Env, envmap.MapToEnv(env)...)
 	cmd.Dir = exeFolderPath
