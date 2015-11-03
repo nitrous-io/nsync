@@ -9,6 +9,7 @@ all:
 	@mkdir -p dist/
 	@echo "$(OK_COLOR)--> Compiling...$(NO_COLOR)"
 	go build -v -o dist/nsync
+	@cp -a bin dist
 
 deps:
 	go get -d -v ./...
