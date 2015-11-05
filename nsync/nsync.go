@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"sync"
@@ -18,12 +19,18 @@ import (
 	"github.com/rjeczalik/notify"
 )
 
-var exeFolderPath = mustString(osext.ExecutableFolder())
-var unisonExePath, sshExePath string
-var isWindows = runtime.GOOS == "windows"
+var (
+	exeFolderPath = mustString(osext.ExecutableFolder())
+	isWindows     = runtime.GOOS == "windows"
 
-var ignoreList = []string{".unison", ".git", ".svn", ".hg", "CVS", ".DS_Store", ".AppleDouble", ".LSOverride", ".Spotlight-V100", ".Trashes", "Thumbs.db", "desktop.ini", "*.lock", "*.sock", "*.pid", "*.sw?", "._*", "*~"}
-var ignorePathList = []string{"tmp/sessions", "tmp/cache", "tmp/pids", "tmp/sockets"}
+	unisonExePath string
+	sshExePath    string
+
+	ignoreList     = []string{".unison", ".git", ".svn", ".hg", "CVS", ".DS_Store", ".AppleDouble", ".LSOverride", ".Spotlight-V100", ".Trashes", "Thumbs.db", "desktop.ini", "*.lock", "*.sock", "*.pid", "*.sw?", ".unison*", "._*", "*~"}
+	ignorePathList = []string{"tmp/sessions", "tmp/cache", "tmp/pids", "tmp/sockets"}
+
+	remoteChangeRe = regexp.MustCompile(`^\s*Change\([^\)]+\):\s*(.*?)\s*$`)
+)
 
 const fileSyncDelay = 100 * time.Millisecond
 
@@ -151,27 +158,54 @@ func (ns *Nsync) Start() {
 
 	ns.performSync()
 
-	fsC := make(chan notify.EventInfo, 1000)
+	notifyChan := make(chan notify.EventInfo, 1000)
+	remoteChan := make(chan string, 1000)
+	errorChan := make(chan error, 1)
+
+	handleChange := func(changedPath string, local bool) {
+		if !pathmatch.PathMatchAny(changedPath, append(ignoreList, ignorePathList...)...) {
+			fmt.Printf("changed path ")
+			if local {
+				fmt.Printf("(local): ")
+			} else {
+				fmt.Printf("(remote): ")
+			}
+			fmt.Println(changedPath)
+
+			if timer != nil {
+				timer.Reset(fileSyncDelay)
+			} else {
+				timer = time.AfterFunc(fileSyncDelay, runSync)
+			}
+		}
+	}
+
+	fmt.Printf("Watching %s/%s...\n", ns.sshUrl, ns.remotePath)
+	go ns.startRemoteWatcher(remoteChan, errorChan)
 
 	fmt.Printf("Watching %s...\n", localPath)
-	if err := notify.Watch(filepath.Join(localPath, "..."), fsC, notify.All); err != nil {
+	if err := notify.Watch(filepath.Join(localPath, "..."), notifyChan, notify.All); err != nil {
 		log.Fatal(err)
 	}
-	defer notify.Stop(fsC)
+	defer notify.Stop(notifyChan)
 
 	for {
 		select {
-		case change := <-fsC: // file system change
-			changedPath := change.Path()
-
-			if !pathmatch.PathMatchAny(changedPath, append(ignoreList, ignorePathList...)...) {
-				fmt.Println("Detected change:", change)
-
-				if timer != nil {
-					timer.Reset(fileSyncDelay)
-				} else {
-					timer = time.AfterFunc(fileSyncDelay, runSync)
+		case change := <-notifyChan: // remote file system change
+			{
+				handleChange(change.Path(), true)
+			}
+		case change := <-remoteChan:
+			{
+				match := remoteChangeRe.FindStringSubmatch(change)
+				if len(match) >= 2 {
+					handleChange(match[1], false)
 				}
+			}
+		case err := <-errorChan:
+			{
+				fmt.Println("error received: ", err)
+				log.Fatalf("Lost connection to server")
 			}
 		}
 	}
@@ -184,12 +218,11 @@ func (ns *Nsync) performSync() {
 	ns.errorIsFatal = false
 	ns.retryDelay = 10 * time.Second
 	ns.dirty = false
+	ns.lastTransferCount = -1
 
 	cmd := ns.unisonCmd()
 	out, err := cmd.CombinedOutput()
 	outStr := string(out)
-
-	fmt.Println(outStr)
 
 	if err != nil {
 		ns.lastError = err
@@ -208,6 +241,10 @@ func (ns *Nsync) performSync() {
 			log.Println("Retrying...")
 			ns.performSync()
 		})
+	}
+
+	if ns.lastTransferCount != -1 {
+		log.Printf("%d files transferred.", ns.lastTransferCount)
 	}
 
 	log.Println("Sync end!")

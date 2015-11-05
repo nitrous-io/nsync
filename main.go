@@ -14,5 +14,6 @@ func main() {
 	}
 
 	ns := nsync.NewNsync(os.Args[1], os.Args[2], os.Args[3], os.Args[4])
+
 	ns.Start()
 }
