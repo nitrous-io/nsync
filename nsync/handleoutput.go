@@ -10,7 +10,7 @@ import (
 )
 
 var (
-	outputErrRe         = regexp.MustCompile(`(?m)[Ee]rror:\s*(.+)\z`)
+	outputErrRe         = regexp.MustCompile(`(?ms)[Ee]rror:\s*(.+?)\s*\z`)
 	identicalFilenameRe = regexp.MustCompile(`\(File\s+'([^']+)`)
 	malformedPatternRe  = regexp.MustCompile(`Malformed pattern: "(.+)"\.$`)
 	transferCountRe     = regexp.MustCompile(`Synchronization complete at .+ \(([\d,]+) items? transferred`)
@@ -26,9 +26,7 @@ var (
 )
 
 func (ns *Nsync) handleOutput(out string) {
-	fmt.Println("looking for error message in", out)
 	match := outputErrRe.FindStringSubmatch(out)
-	fmt.Printf("looking for error message %+v\n", match)
 	if len(match) >= 2 {
 		errMsg := match[1]
 

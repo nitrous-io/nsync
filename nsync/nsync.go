@@ -257,11 +257,12 @@ func (ns *Nsync) unisonCmd() *exec.Cmd {
 		"-perms=777",           // synchronize all permissions
 		"-confirmbigdel=false", // don't ask about whole-replica deletes
 		"-confirmmerge=false",  // don't ask before committing a merge
-		"-log=false",           // no log messages
+		"-log=false",           // don't log to file
 		"-rsrc=false",          // don't sync resource forks
 		"-sshcmd", sshExePath,  // local ssh command path
-		"-sshargs", strings.Join(sshArgs, " "),
-		"-servercmd=/nitrous/nitrous-unison",
+		"-sshargs", strings.Join(sshArgs, " "), // arguments to ssh command
+		"-servercmd=/nitrous/nitrous-unison", // location of unison binary on server
+		"-times", // sync modified times
 		"-ignore", fmt.Sprintf("Name {%s}", strings.Join(ignoreList, ",")),
 		"-ignore", fmt.Sprintf("Path {%s}", strings.Join(ignorePathList, ",")),
 		"-ignorecase=true",
