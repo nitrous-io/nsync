@@ -4,8 +4,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/ioutil"
 	"net/http"
+	"net/url"
 	"os"
+	"strings"
 )
 
 var nitrousHost = os.Getenv("NITROUS_HOST")
@@ -84,8 +87,29 @@ func (ns *Nsync) getHostInfo(hostId int64) (hostSlug string, hostIP string, err 
 	return "", "", errors.New("host info not found")
 }
 
-func (ns *Nsync) uploadPublicKey(pubKey string) error {
-	// POST /api/v0/containers/<containerslug>/keys  with data - key
+// POST /api/v0/containers/<containerslug>/keys  with data - key
+func (ns *Nsync) uploadPublicKey(containerSlug, pubKey string) error {
+	params := map[string]string{
+		"key": pubKey,
+	}
+
+	res, err := ns.authedPost(fmt.Sprintf("/api/v0/containers/%s/keys", containerSlug), params)
+	if err != nil {
+		return err
+	}
+
+	if res.StatusCode != http.StatusCreated {
+		if b, err := ioutil.ReadAll(res.Body); err == nil {
+			output := string(b)
+
+			if strings.Contains(output, "key already exists") {
+				return nil
+			}
+		}
+
+		return errors.New("failed to add ssh key")
+	}
+
 	return nil
 }
 
@@ -93,6 +117,12 @@ func (ns *Nsync) authedGet(url string) (res *http.Response, err error) {
 	return Get(url, map[string]string{
 		"Authorization": "Bearer " + ns.token,
 	})
+}
+
+func (ns *Nsync) authedPost(url string, params map[string]string) (res *http.Response, err error) {
+	return Post(url, map[string]string{
+		"Authorization": "Bearer " + ns.token,
+	}, params)
 }
 
 func Get(url string, headers map[string]string) (res *http.Response, err error) {
@@ -103,5 +133,25 @@ func Get(url string, headers map[string]string) (res *http.Response, err error) 
 	for k, v := range headers {
 		req.Header.Add(k, v)
 	}
+	return http.DefaultClient.Do(req)
+}
+
+func Post(requestUrl string, headers map[string]string, params map[string]string) (res *http.Response, err error) {
+	data := url.Values{}
+	for k, v := range params {
+		data.Set(k, v)
+	}
+	fmt.Println("data", data)
+
+	req, err := http.NewRequest("POST", nitrousHost+requestUrl, strings.NewReader(data.Encode()))
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	for k, v := range headers {
+		req.Header.Add(k, v)
+	}
+
 	return http.DefaultClient.Do(req)
 }

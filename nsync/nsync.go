@@ -132,7 +132,7 @@ func (ns *Nsync) generateAndUploadSSHKey() error {
 	if err != nil {
 		return err
 	}
-	err = ns.uploadPublicKey(pubKey)
+	err = ns.uploadPublicKey(ns.containerSlug, pubKey)
 	if err != nil {
 		return err
 	}
