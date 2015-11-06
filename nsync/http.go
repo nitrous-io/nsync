@@ -84,6 +84,11 @@ func (ns *Nsync) getHostInfo(hostId int64) (hostSlug string, hostIP string, err 
 	return "", "", errors.New("host info not found")
 }
 
+func (ns *Nsync) uploadPublicKey(pubKey string) error {
+	// POST /api/v0/containers/<containerslug>/keys  with data - key
+	return nil
+}
+
 func (ns *Nsync) authedGet(url string) (res *http.Response, err error) {
 	return Get(url, map[string]string{
 		"Authorization": "Bearer " + ns.token,

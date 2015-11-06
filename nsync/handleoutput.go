@@ -81,7 +81,7 @@ func (ns *Nsync) handleOutput(out string) {
 
 	if strings.Contains(out, "Permission denied (") {
 		ns.lastError = ErrSSHAccessDenied
-		ns.errorIsFatal = true
+		ns.retryDelay = 200 * time.Millisecond
 	}
 
 	match = transferCountRe.FindStringSubmatch(out)

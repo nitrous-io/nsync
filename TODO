@@ -1,0 +1,5 @@
+* .syncignore
+* shortname will throw an error if file doesnt exist at path
+* ssh keygen + upload
+* remove panics
+* validate keys on start

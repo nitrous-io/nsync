@@ -105,6 +105,10 @@ func NewNsync(token, nitrousFolderPath, containerSlug, remotePath string) *Nsync
 
 	ns.sshKeyPath = filepath.Join(nitrousFolderPath, "SSH Keys", username, "id_rsa")
 
+	if err := ns.generateAndUploadSSHKey(); err != nil {
+		panic(err)
+	}
+
 	hostId, sshUrl, err := ns.getContainerInfo(ns.containerSlug)
 	if err != nil {
 		panic(err)
@@ -121,6 +125,18 @@ func NewNsync(token, nitrousFolderPath, containerSlug, remotePath string) *Nsync
 	ns.hostSlug = hostSlug
 
 	return ns
+}
+
+func (ns *Nsync) generateAndUploadSSHKey() error {
+	pubKey, err := ns.generateSSHKeyPairIfAbsent()
+	if err != nil {
+		return err
+	}
+	err = ns.uploadPublicKey(pubKey)
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 func (ns *Nsync) makeLocalPath() string {
@@ -235,6 +251,12 @@ func (ns *Nsync) performSync() {
 
 		if ns.errorIsFatal {
 			log.Fatal("Error is fatal! Exiting!")
+		}
+
+		if ns.lastError == ErrSSHAccessDenied {
+			if err := ns.generateAndUploadSSHKey(); err != nil {
+				panic(err)
+			}
 		}
 
 		time.AfterFunc(ns.retryDelay, func() {
