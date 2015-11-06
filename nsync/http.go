@@ -141,7 +141,6 @@ func Post(requestUrl string, headers map[string]string, params map[string]string
 	for k, v := range params {
 		data.Set(k, v)
 	}
-	fmt.Println("data", data)
 
 	req, err := http.NewRequest("POST", nitrousHost+requestUrl, strings.NewReader(data.Encode()))
 	if err != nil {
