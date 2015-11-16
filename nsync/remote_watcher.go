@@ -12,8 +12,8 @@ const (
 	timeout = 5 * time.Second
 )
 
-func (ns *Nsync) startRemoteWatcher(outputChan chan<- string, errorChan chan<- error) {
-	client := sshremotecmd.NewSSHRemoteCmd(ns.sshUrl, watcherCommand, ns.sshKeyPath, timeout)
+func (ns *Nsync) startRemoteWatcher(outputChan chan<- string, errorChan chan<- error, stopChan chan struct{}) {
+	client := sshremotecmd.NewSSHRemoteCmd(ns.sshUrl, watcherCommand, ns.sshKeyPath, timeout, stopChan)
 	if err := client.Run(outputChan, errorChan); err != nil {
 		errorChan <- err
 	}

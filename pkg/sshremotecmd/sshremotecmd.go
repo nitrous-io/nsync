@@ -2,6 +2,7 @@ package sshremotecmd
 
 import (
 	"bufio"
+	"fmt"
 	"io"
 	"io/ioutil"
 	"net/url"
@@ -15,14 +16,18 @@ type SSHRemoteCmd struct {
 	command    string
 	sshKeyPath string
 	timeout    time.Duration
+
+	stopCh    chan struct{} // To stop the session
+	sshClient *ssh.Client
 }
 
-func NewSSHRemoteCmd(sshUrl, command, sshKeyPath string, timeout time.Duration) *SSHRemoteCmd {
+func NewSSHRemoteCmd(sshUrl, command, sshKeyPath string, timeout time.Duration, stopCh chan struct{}) *SSHRemoteCmd {
 	return &SSHRemoteCmd{
 		sshUrl:     sshUrl,
 		command:    command,
 		sshKeyPath: sshKeyPath,
 		timeout:    timeout,
+		stopCh:     stopCh,
 	}
 }
 
@@ -31,7 +36,6 @@ func (s *SSHRemoteCmd) Run(outputChan chan<- string, errorChan chan<- error) err
 	if err != nil {
 		return err
 	}
-	defer session.Close()
 
 	stdoutReader, err := session.StdoutPipe()
 	if err != nil {
@@ -46,6 +50,9 @@ func (s *SSHRemoteCmd) Run(outputChan chan<- string, errorChan chan<- error) err
 	outputReader := io.MultiReader(stdoutReader, stderrReader)
 	scanner := bufio.NewScanner(outputReader)
 
+	var internelErrCh chan error
+
+	// listening to output stream
 	go func() {
 		for scanner.Scan() {
 			if text := scanner.Text(); text != "" {
@@ -54,12 +61,30 @@ func (s *SSHRemoteCmd) Run(outputChan chan<- string, errorChan chan<- error) err
 		}
 
 		if err := scanner.Err(); err != nil {
-			errorChan <- err
+			internelErrCh <- err
 		}
 	}()
 
-	if err := session.Run(s.command); err != nil {
-		return err
+	// listening to session event
+	go func() {
+		if err := session.Run(s.command); err != nil {
+			internelErrCh <- err
+		}
+	}()
+
+	for {
+		select {
+		case <-s.stopCh:
+			fmt.Println("Got stop signal")
+			session.Close()
+			s.closeConnection()
+			fmt.Println("send stop signal back")
+			s.stopCh <- struct{}{}
+		case err := <-internelErrCh:
+			session.Close()
+			s.closeConnection()
+			errorChan <- err
+		}
 	}
 
 	return nil
@@ -101,5 +126,34 @@ func (s *SSHRemoteCmd) makeSession() (*ssh.Session, error) {
 		return nil, err
 	}
 
-	return cl.NewSession()
+	if s.sshClient != nil {
+		s.sshClient.Close()
+	}
+
+	s.sshClient = cl
+	session, err := cl.NewSession()
+	if err != nil {
+		return nil, err
+	}
+
+	// Set up terminal modes
+	modes := ssh.TerminalModes{
+		ssh.ECHO:          0,     // disable echoing
+		ssh.TTY_OP_ISPEED: 14400, // input speed = 14.4kbaud
+		ssh.TTY_OP_OSPEED: 14400, // output speed = 14.4kbaud
+	}
+
+	// Request pseudo terminal
+	if err := session.RequestPty("xterm", 80, 40, modes); err != nil {
+		return nil, err
+	}
+
+	return session, nil
+}
+
+func (s *SSHRemoteCmd) closeConnection() {
+	if s.sshClient != nil {
+		fmt.Println("close connection")
+		s.sshClient.Close()
+	}
 }

@@ -87,14 +87,17 @@ type Nsync struct {
 	retryDelay       time.Duration
 
 	lastTransferCount int
+
+	stopCh chan struct{}
 }
 
-func NewNsync(token, nitrousFolderPath, containerSlug, remotePath string) *Nsync {
+func NewNsync(token, nitrousFolderPath, containerSlug, remotePath string, stopCh chan struct{}) *Nsync {
 	ns := &Nsync{
 		token:             token,
 		nitrousFolderPath: nitrousFolderPath,
 		containerSlug:     containerSlug,
 		remotePath:        remotePath,
+		stopCh:            stopCh,
 	}
 
 	username, err := ns.getUsername()
@@ -197,7 +200,7 @@ func (ns *Nsync) Start() {
 	}
 
 	fmt.Printf("Watching %s/%s...\n", ns.sshUrl, ns.remotePath)
-	go ns.startRemoteWatcher(remoteChan, errorChan)
+	go ns.startRemoteWatcher(remoteChan, errorChan, ns.stopCh)
 
 	fmt.Printf("Watching %s...\n", localPath)
 	if err := notify.Watch(filepath.Join(localPath, "..."), notifyChan, notify.All); err != nil {

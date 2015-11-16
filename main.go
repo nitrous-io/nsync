@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"os/signal"
 
 	"github.com/nitrous-io/nsync/nsync"
 )
@@ -13,7 +14,19 @@ func main() {
 		os.Exit(1)
 	}
 
-	ns := nsync.NewNsync(os.Args[1], os.Args[2], os.Args[3], os.Args[4])
 
-	ns.Start()
+  stopCh := make(chan struct{})
+	ns := nsync.NewNsync(os.Args[1], os.Args[2], os.Args[3], os.Args[4], stopCh)
+	go ns.Start()
+
+	c := make(chan os.Signal, 1)
+	signal.Notify(c, os.Interrupt, os.Kill)
+	fmt.Println("listening signal....")
+
+  select {
+  case s := <-c:
+	  fmt.Println("Got signal:", s)
+    stopCh <- struct{}{}
+    <-stopCh
+  }
 }
