@@ -4,9 +4,9 @@ import (
 	"bufio"
 	"fmt"
 	"io"
-	"io/ioutil"
-	"net/url"
 	"time"
+
+	"github.com/nitrous-io/nsync/pkg/sshconfig"
 
 	"golang.org/x/crypto/ssh"
 )
@@ -90,38 +90,13 @@ func (s *SSHRemoteCmd) Run(outputChan chan<- string, errorChan chan<- error) err
 	return nil
 }
 
-func (s *SSHRemoteCmd) readSSHKey() (ssh.Signer, error) {
-	buf, err := ioutil.ReadFile(s.sshKeyPath)
-	if err != nil {
-		return nil, err
-	}
-
-	key, err := ssh.ParsePrivateKey(buf)
-	if err != nil {
-		return nil, err
-	}
-	return key, err
-}
-
 func (s *SSHRemoteCmd) makeSession() (*ssh.Session, error) {
-	u, err := url.Parse(s.sshUrl)
+	host, config, err := sshconfig.Config(s.sshUrl, s.sshKeyPath)
 	if err != nil {
-		return nil, err
+		panic(err)
 	}
 
-	key, err := s.readSSHKey()
-	if err != nil {
-		return nil, err
-	}
-
-	config := &ssh.ClientConfig{
-		User: u.User.Username(),
-		Auth: []ssh.AuthMethod{
-			ssh.PublicKeys(key),
-		},
-	}
-
-	cl, err := sshDialTimeout("tcp", u.Host, config, s.timeout)
+	cl, err := sshDialTimeout("tcp", host, config, s.timeout)
 	if err != nil {
 		return nil, err
 	}

@@ -1,4 +1,5 @@
 * .syncignore
+  * refactoring ssh part to share code for sftp
   * reload when .syncignore is changed
   * don't trigger sync when the filename is listed in .syncignore
 * shortname will throw an error if file doesnt exist at path

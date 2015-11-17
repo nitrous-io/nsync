@@ -13,11 +13,15 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/crypto/ssh"
+
 	"github.com/kardianos/osext"
 	"github.com/nitrous-io/nsync/pkg/envmap"
 	"github.com/nitrous-io/nsync/pkg/pathmatch"
 	"github.com/nitrous-io/nsync/pkg/shortname"
+	"github.com/nitrous-io/nsync/pkg/sshconfig"
 	"github.com/nitrous-io/nsync/pkg/syncignore"
+	"github.com/pkg/sftp"
 	"github.com/rjeczalik/notify"
 )
 
@@ -134,22 +138,6 @@ func NewNsync(token, nitrousFolderPath, containerSlug, remotePath string, stopCh
 	fmt.Println("host slug obtained: ", hostSlug)
 	ns.hostSlug = hostSlug
 
-	syncIgnorePath := filepath.Join(ns.makeLocalPath(), syncIgnoreFile)
-	if _, err := os.Stat(syncIgnorePath); err == nil {
-		ignoreContent, err := ioutil.ReadFile(syncIgnorePath)
-		if err != nil {
-			panic(err)
-		}
-		syncIgnoreList := syncignore.Parse(string(ignoreContent))
-		if err != nil {
-			panic(err)
-		}
-		ns.syncIgnoreList = append(ns.syncIgnoreList, syncIgnoreList...)
-		fmt.Printf("sync ignore list: %+v\n", ns.syncIgnoreList)
-	} else {
-		fmt.Printf("Failed to find .syncignore: %+v", err)
-	}
-
 	return ns
 }
 
@@ -180,7 +168,10 @@ func (ns *Nsync) Start() {
 		ns.shouldIgnoreArchives = true
 	}
 
-	var timer *time.Timer
+	err := ns.uploadSyncIgnore()
+	if err != nil {
+		panic(err)
+	}
 
 	runSync := func() {
 		ns.syncingLock.Lock()
@@ -204,6 +195,7 @@ func (ns *Nsync) Start() {
 	remoteChan := make(chan string, 1000)
 	errorChan := make(chan error, 1)
 
+	var timer *time.Timer
 	handleChange := func(changedPath string, local bool) {
 		if !pathmatch.PathMatchAny(changedPath, append(ignoreList, ignorePathList...)...) {
 			fmt.Printf("changed path ")
@@ -255,6 +247,12 @@ func (ns *Nsync) Start() {
 
 func (ns *Nsync) performSync() {
 	log.Println("Sync begin...")
+	err := ns.parseSyncIgnore()
+	if err != nil {
+		// FIXME
+		panic(err)
+	}
+
 	ns.lastError = nil
 	ns.lastErrorDetails = ""
 	ns.errorIsFatal = false
@@ -382,4 +380,88 @@ func (ns *Nsync) unisonCmd() *exec.Cmd {
 	cmd.Dir = exeFolderPath
 
 	return cmd
+}
+
+func (ns *Nsync) uploadSyncIgnore() error {
+	// Copy .syncignore from remote
+	host, config, err := sshconfig.Config(ns.sshUrl, ns.sshKeyPath)
+	if err != nil {
+		return err
+	}
+
+	conn, err := ssh.Dial("tcp", host, config)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	sftp, err := sftp.NewClient(conn)
+	if err != nil {
+		return err
+	}
+	defer sftp.Close()
+
+	syncIgnoreLocalPath := filepath.Join(ns.makeLocalPath(), syncIgnoreFile)
+	syncIgnoreRemotePath := "/home/nitrous/code/" + syncIgnoreFile
+
+	var localModTime, remoteModTime time.Time
+
+	fi, err := os.Stat(syncIgnoreLocalPath)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+
+	if fi != nil && !os.IsNotExist(err) {
+		localModTime = fi.ModTime()
+	}
+
+	fi, err = sftp.Stat(syncIgnoreRemotePath)
+	if err != nil {
+		if strings.Contains(err.Error(), "SSH_FX_NO_SUCH_FILE") {
+			return nil
+		}
+		return err
+	}
+
+	remoteModTime = fi.ModTime()
+
+	if localModTime.Before(remoteModTime) {
+		f, err := sftp.OpenFile(syncIgnoreRemotePath, os.O_RDONLY)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+
+		log.Println("Downloading .syncignore...")
+		content, err := ioutil.ReadAll(f)
+		if err != nil {
+			return err
+		}
+
+		err = ioutil.WriteFile(syncIgnoreLocalPath, content, 0644)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (ns *Nsync) parseSyncIgnore() error {
+	syncIgnorePath := filepath.Join(ns.makeLocalPath(), syncIgnoreFile)
+	if _, err := os.Stat(syncIgnorePath); err == nil {
+		ignoreContent, err := ioutil.ReadFile(syncIgnorePath)
+		if err != nil {
+			return err
+		}
+		syncIgnoreList := syncignore.Parse(string(ignoreContent))
+		if err != nil {
+			return err
+		}
+		ns.syncIgnoreList = append(ns.syncIgnoreList, syncIgnoreList...)
+		fmt.Printf("sync ignore list: %+v\n", ns.syncIgnoreList)
+	} else {
+		fmt.Printf("Failed to find .syncignore: %+v", err)
+	}
+	return nil
 }
