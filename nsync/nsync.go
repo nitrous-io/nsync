@@ -2,6 +2,7 @@ package nsync
 
 import (
 	"fmt"
+	"io/ioutil"
 	"log"
 	"os"
 	"os/exec"
@@ -16,6 +17,7 @@ import (
 	"github.com/nitrous-io/nsync/pkg/envmap"
 	"github.com/nitrous-io/nsync/pkg/pathmatch"
 	"github.com/nitrous-io/nsync/pkg/shortname"
+	"github.com/nitrous-io/nsync/pkg/syncignore"
 	"github.com/rjeczalik/notify"
 )
 
@@ -30,6 +32,8 @@ var (
 	ignorePathList = []string{"tmp/sessions", "tmp/cache", "tmp/pids", "tmp/sockets"}
 
 	remoteChangeRe = regexp.MustCompile(`^\s*Change\([^\)]+\):\s*(.*?)\s*$`)
+
+	syncIgnoreFile = ".syncignore"
 )
 
 const fileSyncDelay = 100 * time.Millisecond
@@ -55,6 +59,7 @@ func init() {
 	for i, p := range ignorePathList {
 		ignorePathList[i] = filepath.Join(strings.Split(p, "/")...)
 	}
+
 }
 
 func mustString(s string, err error) string {
@@ -89,6 +94,8 @@ type Nsync struct {
 	lastTransferCount int
 
 	stopCh chan struct{}
+
+	syncIgnoreList []string
 }
 
 func NewNsync(token, nitrousFolderPath, containerSlug, remotePath string, stopCh chan struct{}) *Nsync {
@@ -126,6 +133,22 @@ func NewNsync(token, nitrousFolderPath, containerSlug, remotePath string, stopCh
 	}
 	fmt.Println("host slug obtained: ", hostSlug)
 	ns.hostSlug = hostSlug
+
+	syncIgnorePath := filepath.Join(ns.makeLocalPath(), syncIgnoreFile)
+	if _, err := os.Stat(syncIgnorePath); err == nil {
+		ignoreContent, err := ioutil.ReadFile(syncIgnorePath)
+		if err != nil {
+			panic(err)
+		}
+		syncIgnoreList := syncignore.Parse(string(ignoreContent))
+		if err != nil {
+			panic(err)
+		}
+		ns.syncIgnoreList = append(ns.syncIgnoreList, syncIgnoreList...)
+		fmt.Printf("sync ignore list: %+v\n", ns.syncIgnoreList)
+	} else {
+		fmt.Printf("Failed to find .syncignore: %+v", err)
+	}
 
 	return ns
 }
@@ -340,6 +363,12 @@ func (ns *Nsync) unisonCmd() *exec.Cmd {
 	if ns.shouldIgnoreLocks {
 		ns.shouldIgnoreLocks = false
 		args = append(args, "-ignorelocks")
+	}
+
+	if len(ns.syncIgnoreList) > 0 {
+		for i := 0; i < len(ns.syncIgnoreList); i++ {
+			args = append(args, "-ignore", ns.syncIgnoreList[i])
+		}
 	}
 
 	fmt.Printf("%s %s\n", unisonExePath, strings.Join(args, " "))
