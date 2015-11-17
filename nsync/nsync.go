@@ -1,6 +1,7 @@
 package nsync
 
 import (
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -38,6 +39,8 @@ var (
 	remoteChangeRe = regexp.MustCompile(`^\s*Change\([^\)]+\):\s*(.*?)\s*$`)
 
 	syncIgnoreFile = ".syncignore"
+
+	errRemoteWatcherKilled = errors.New("remote watcher killed")
 )
 
 const fileSyncDelay = 100 * time.Millisecond

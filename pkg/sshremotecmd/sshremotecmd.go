@@ -2,6 +2,7 @@ package sshremotecmd
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"time"
@@ -10,6 +11,8 @@ import (
 
 	"golang.org/x/crypto/ssh"
 )
+
+var ErrRemoteCmdKilled = errors.New("remote command killed")
 
 type SSHRemoteCmd struct {
 	sshUrl     string
@@ -31,7 +34,7 @@ func NewSSHRemoteCmd(sshUrl, command, sshKeyPath string, timeout time.Duration, 
 	}
 }
 
-func (s *SSHRemoteCmd) Run(outputChan chan<- string, errorChan chan<- error) error {
+func (s *SSHRemoteCmd) Run(outputChan chan<- string) error {
 	session, err := s.makeSession()
 	if err != nil {
 		return err
@@ -50,7 +53,7 @@ func (s *SSHRemoteCmd) Run(outputChan chan<- string, errorChan chan<- error) err
 	outputReader := io.MultiReader(stdoutReader, stderrReader)
 	scanner := bufio.NewScanner(outputReader)
 
-	var internelErrCh chan error
+	internalErrCh := make(chan error)
 
 	// listening to output stream
 	go func() {
@@ -61,29 +64,39 @@ func (s *SSHRemoteCmd) Run(outputChan chan<- string, errorChan chan<- error) err
 		}
 
 		if err := scanner.Err(); err != nil {
-			internelErrCh <- err
+			fmt.Printf(" ====> Scanner Error: %+v\n", err)
+			internalErrCh <- err
 		}
+		internalErrCh <- ErrRemoteCmdKilled
 	}()
 
 	// listening to session event
 	go func() {
 		if err := session.Run(s.command); err != nil {
-			internelErrCh <- err
+			fmt.Printf(" ====> Running Error: %+v\n", err)
+			internalErrCh <- err
+		} else {
+			internalErrCh <- ErrRemoteCmdKilled
 		}
 	}()
+
+	cleanup := func() {
+		session.Close()
+		s.closeConnection()
+	}
 
 	for {
 		select {
 		case <-s.stopCh:
 			fmt.Println("Got stop signal")
-			session.Close()
-			s.closeConnection()
+			cleanup()
 			fmt.Println("send stop signal back")
 			s.stopCh <- struct{}{}
-		case err := <-internelErrCh:
-			session.Close()
-			s.closeConnection()
-			errorChan <- err
+			return nil
+		case err := <-internalErrCh:
+			fmt.Println("internal err ch received:", err)
+			cleanup()
+			return err
 		}
 	}
 
