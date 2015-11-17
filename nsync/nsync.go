@@ -50,8 +50,11 @@ func init() {
 		unisonExePath = filepath.Join(exeFolderPath, "bin", "lin64", "nitrous-unison")
 		sshExePath = filepath.Join(exeFolderPath, "bin", "lin64", "nitrous-unison")
 	} else if runtime.GOOS == "windows" {
-		unisonExePath = filepath.Join(exeFolderPath, "bin", "win32", "nitrous-unison.exe")
 		var err error
+		unisonExePath, err = shortname.Get(filepath.Join(exeFolderPath, "bin", "win32", "nitrous-unison.exe"))
+		if err != nil {
+			panic(err)
+		}
 		sshExePath, err = shortname.Get(filepath.Join(exeFolderPath, "bin", "win32", "nitrous-ssh.exe"))
 		if err != nil {
 			panic(err)
@@ -249,7 +252,6 @@ func (ns *Nsync) performSync() {
 	log.Println("Sync begin...")
 	err := ns.parseSyncIgnore()
 	if err != nil {
-		// FIXME
 		panic(err)
 	}
 
