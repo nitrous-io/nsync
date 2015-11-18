@@ -39,6 +39,7 @@ var (
 	remoteChangeRe = regexp.MustCompile(`^\s*Change\([^\)]+\):\s*(.*?)\s*$`)
 
 	syncIgnoreFile = ".syncignore"
+	tempFolderPath = "/tmp"
 
 	errRemoteWatcherKilled = errors.New("remote watcher killed")
 )
@@ -46,12 +47,27 @@ var (
 const fileSyncDelay = 100 * time.Millisecond
 
 func init() {
+	createSymlinkIfNotExist := func() {
+		sshExeRealPath := filepath.Join(exeFolderPath, "bin", "osx64", "nitrous-ssh")
+		sshExeSymlinkPath := filepath.Join(tempFolderPath, "nitrous-ssh")
+		if _, err := os.Stat(sshExeSymlinkPath); os.IsNotExist(err) {
+			if err := os.Symlink(sshExeRealPath, sshExeSymlinkPath); err != nil {
+				log.Panic("Failed to create symlink of nitrous-ssh: %+v", err)
+			}
+		} else if err != nil {
+			log.Panic("Failed to get symlink of nitrous-ssh: %+v", err)
+		}
+
+		sshExePath = sshExeSymlinkPath
+	}
+
 	if runtime.GOOS == "darwin" {
 		unisonExePath = filepath.Join(exeFolderPath, "bin", "osx64", "nitrous-unison")
-		sshExePath = filepath.Join(exeFolderPath, "bin", "osx64", "nitrous-ssh")
+		createSymlinkIfNotExist()
 	} else if runtime.GOOS == "linux" && runtime.GOARCH == "amd64" {
 		unisonExePath = filepath.Join(exeFolderPath, "bin", "lin64", "nitrous-unison")
 		sshExePath = filepath.Join(exeFolderPath, "bin", "lin64", "nitrous-unison")
+		createSymlinkIfNotExist()
 	} else if runtime.GOOS == "windows" {
 		var err error
 		unisonExePath, err = shortname.Get(filepath.Join(exeFolderPath, "bin", "win32", "nitrous-unison.exe"))
@@ -221,10 +237,10 @@ func (ns *Nsync) Start() {
 		}
 	}
 
-	log.Debugf("Watching %s/%s...\n", ns.sshUrl, ns.remotePath)
+	log.Debugf("Watching %s/%s...", ns.sshUrl, ns.remotePath)
 	go ns.startRemoteWatcher(remoteChan, errorChan, ns.stopCh)
 
-	log.Debugf("Watching %s...\n", localPath)
+	log.Debugf("Watching %s...", localPath)
 	if err := notify.Watch(filepath.Join(localPath, "..."), notifyChan, notify.All); err != nil {
 		log.Fatal(err)
 	}
@@ -295,7 +311,7 @@ func (ns *Nsync) performSync() {
 	}
 
 	if ns.lastTransferCount != -1 {
-		log.Printf("sync: %d files transferred.", ns.lastTransferCount)
+		log.Infof("sync: %d files transferred.", ns.lastTransferCount)
 	}
 
 	log.Debug("Sync end!")
