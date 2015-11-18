@@ -421,7 +421,7 @@ func (ns *Nsync) uploadSyncIgnore() error {
 	defer sftp.Close()
 
 	syncIgnoreLocalPath := filepath.Join(ns.makeLocalPath(), syncIgnoreFile)
-	syncIgnoreRemotePath := "/home/nitrous/code/" + syncIgnoreFile
+	syncIgnoreRemotePath := filepath.Join(ns.remotePath, syncIgnoreFile)
 
 	var localModTime, remoteModTime time.Time
 
