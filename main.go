@@ -8,6 +8,10 @@ import (
 	"github.com/nitrous-io/nsync/nsync"
 )
 
+func init() {
+	log.SetLevel(log.DebugLevel)
+}
+
 func main() {
 	if len(os.Args) < 5 {
 		log.Infof("usage: %s <nitrous-token> <nitrous-folder-path> <container-slug> <remote-path>", os.Args[0])
