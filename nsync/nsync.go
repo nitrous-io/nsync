@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"io/ioutil"
-	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,6 +15,7 @@ import (
 
 	"golang.org/x/crypto/ssh"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/kardianos/osext"
 	"github.com/nitrous-io/nsync/pkg/envmap"
 	"github.com/nitrous-io/nsync/pkg/pathmatch"
@@ -56,14 +56,14 @@ func init() {
 		var err error
 		unisonExePath, err = shortname.Get(filepath.Join(exeFolderPath, "bin", "win32", "nitrous-unison.exe"))
 		if err != nil {
-			panic(err)
+			log.Panicf("Failed to genereate unison exec path: %+v", err)
 		}
 		sshExePath, err = shortname.Get(filepath.Join(exeFolderPath, "bin", "win32", "nitrous-ssh.exe"))
 		if err != nil {
-			panic(err)
+			log.Panicf("Failed to genereate ssh exec path: %+v", err)
 		}
 	} else {
-		panic(fmt.Sprintf("Unsupported platform: %s-%s!", runtime.GOOS, runtime.GOARCH))
+		log.Panic("Unsupported platform: %s-%s!", runtime.GOOS, runtime.GOARCH)
 	}
 
 	for i, p := range ignorePathList {
@@ -74,7 +74,7 @@ func init() {
 
 func mustString(s string, err error) string {
 	if err != nil {
-		panic(err)
+		log.Panic(err)
 	}
 	return s
 }
@@ -119,29 +119,30 @@ func NewNsync(token, nitrousFolderPath, containerSlug, remotePath string, stopCh
 
 	username, err := ns.getUsername()
 	if err != nil {
-		panic(err)
+		log.Panicf("Failed to get username: %+v", err)
 	}
-	fmt.Println("username obtained: ", username)
+
+	log.Debug("username obtained: ", username)
 
 	ns.sshKeyPath = filepath.Join(nitrousFolderPath, "SSH Keys", username, "id_rsa")
 
 	if err := ns.generateAndUploadSSHKey(); err != nil {
-		panic(err)
+		log.Panicf("Failed to generate and upload ssh key: %+v", err)
 	}
 
 	hostId, sshUrl, err := ns.getContainerInfo(ns.containerSlug)
 	if err != nil {
-		panic(err)
+		log.Panicf("Failed to get container info: %+v", err)
 	}
-	fmt.Println("host id obtained: ", hostId)
-	fmt.Println("SSH URL obtained: ", sshUrl)
+	log.Debug("host id obtained: ", hostId)
+	log.Debug("SSH URL obtained: ", sshUrl)
 	ns.sshUrl = sshUrl
 
 	hostSlug, _, err := ns.getHostInfo(hostId)
 	if err != nil {
-		panic(err)
+		log.Panicf("Failed to get host info: %+v", err)
 	}
-	fmt.Println("host slug obtained: ", hostSlug)
+	log.Debug("host slug obtained: ", hostSlug)
 	ns.hostSlug = hostSlug
 
 	return ns
@@ -204,13 +205,13 @@ func (ns *Nsync) Start() {
 	var timer *time.Timer
 	handleChange := func(changedPath string, local bool) {
 		if !pathmatch.PathMatchAny(changedPath, append(ignoreList, ignorePathList...)...) {
-			fmt.Printf("changed path ")
+			log.Debug("changed path ")
 			if local {
-				fmt.Printf("(local): ")
+				log.Debug("(local): ")
 			} else {
-				fmt.Printf("(remote): ")
+				log.Debug("(remote): ")
 			}
-			fmt.Println(changedPath)
+			log.Debug(changedPath)
 
 			if timer != nil {
 				timer.Reset(fileSyncDelay)
@@ -220,10 +221,10 @@ func (ns *Nsync) Start() {
 		}
 	}
 
-	fmt.Printf("Watching %s/%s...\n", ns.sshUrl, ns.remotePath)
+	log.Debugf("Watching %s/%s...\n", ns.sshUrl, ns.remotePath)
 	go ns.startRemoteWatcher(remoteChan, errorChan, ns.stopCh)
 
-	fmt.Printf("Watching %s...\n", localPath)
+	log.Debugf("Watching %s...\n", localPath)
 	if err := notify.Watch(filepath.Join(localPath, "..."), notifyChan, notify.All); err != nil {
 		log.Fatal(err)
 	}
@@ -244,18 +245,17 @@ func (ns *Nsync) Start() {
 			}
 		case err := <-errorChan:
 			{
-				fmt.Println("error received: ", err)
-				log.Fatalf("Lost connection to server")
+				log.Fatalf("Lost connection to server: %+v", err)
 			}
 		}
 	}
 }
 
 func (ns *Nsync) performSync() {
-	log.Println("Sync begin...")
+	log.Debug("sync: Begin...")
 	err := ns.parseSyncIgnore()
 	if err != nil {
-		panic(err)
+		log.Panicf("sync: Failed to parse .syncignore: %+v", err)
 	}
 
 	ns.lastError = nil
@@ -276,7 +276,7 @@ func (ns *Nsync) performSync() {
 	ns.handleOutput(outStr)
 
 	if ns.lastError != nil {
-		log.Printf("Error occurred: %v", ns.lastError)
+		log.Errorf("sync: Error occurred: %v", ns.lastError)
 
 		if ns.errorIsFatal {
 			log.Fatal("Error is fatal! Exiting!")
@@ -284,24 +284,24 @@ func (ns *Nsync) performSync() {
 
 		if ns.lastError == ErrSSHAccessDenied {
 			if err := ns.generateAndUploadSSHKey(); err != nil {
-				panic(err)
+				log.Panicf("sync: Failed generate and upload ssh key: %+v ", err)
 			}
 		}
 
 		time.AfterFunc(ns.retryDelay, func() {
-			log.Println("Retrying...")
+			log.Info("sync: Retrying...")
 			ns.performSync()
 		})
 	}
 
 	if ns.lastTransferCount != -1 {
-		log.Printf("%d files transferred.", ns.lastTransferCount)
+		log.Printf("sync: %d files transferred.", ns.lastTransferCount)
 	}
 
-	log.Println("Sync end!")
+	log.Debug("Sync end!")
 
 	if ns.dirty {
-		log.Println("changes happened while syncing, syncing again...")
+		log.Debug("changes happened while syncing, syncing again...")
 		ns.performSync()
 	}
 }
@@ -322,7 +322,7 @@ func (ns *Nsync) unisonCmd() *exec.Cmd {
 		var err error
 		sshKeyPathEscaped, err = shortname.Get(ns.sshKeyPath)
 		if err != nil {
-			panic(err)
+			log.Panicf("sync: Failed get short name for ssh key path: %+v ", err)
 		}
 	} else {
 		sshKeyPathEscaped = strings.Replace(strings.Replace(ns.sshKeyPath, `\`, `\\`, -1), " ", `\ `, -1)
@@ -356,8 +356,6 @@ func (ns *Nsync) unisonCmd() *exec.Cmd {
 		"-ignorecase=true",
 	}
 
-	fmt.Printf("should ignore archives: %v\n", ns.shouldIgnoreArchives)
-
 	if _, err := os.Stat(localPath); os.IsNotExist(err) || ns.shouldIgnoreArchives {
 		ns.shouldIgnoreArchives = false
 		args = append(args, "-ignorearchives")
@@ -374,7 +372,7 @@ func (ns *Nsync) unisonCmd() *exec.Cmd {
 		}
 	}
 
-	fmt.Printf("%s %s\n", unisonExePath, strings.Join(args, " "))
+	log.Debugf("%s %s", unisonExePath, strings.Join(args, " "))
 
 	cmd := exec.Command(unisonExePath, args...)
 
@@ -437,7 +435,7 @@ func (ns *Nsync) uploadSyncIgnore() error {
 		}
 		defer f.Close()
 
-		log.Println("Downloading .syncignore...")
+		log.Debug("Downloading .syncignore...")
 		content, err := ioutil.ReadAll(f)
 		if err != nil {
 			return err
@@ -464,9 +462,8 @@ func (ns *Nsync) parseSyncIgnore() error {
 			return err
 		}
 		ns.syncIgnoreList = append(ns.syncIgnoreList, syncIgnoreList...)
-		fmt.Printf("sync ignore list: %+v\n", ns.syncIgnoreList)
 	} else {
-		fmt.Printf("Failed to find .syncignore: %+v", err)
+		log.Errorf("Failed to get .syncignore file information: %+v", err)
 	}
 	return nil
 }

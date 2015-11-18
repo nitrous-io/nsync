@@ -3,7 +3,6 @@ package sshremotecmd
 import (
 	"bufio"
 	"errors"
-	"fmt"
 	"io"
 	"time"
 
@@ -64,7 +63,6 @@ func (s *SSHRemoteCmd) Run(outputChan chan<- string) error {
 		}
 
 		if err := scanner.Err(); err != nil {
-			fmt.Printf(" ====> Scanner Error: %+v\n", err)
 			internalErrCh <- err
 		}
 		internalErrCh <- ErrRemoteCmdKilled
@@ -73,7 +71,6 @@ func (s *SSHRemoteCmd) Run(outputChan chan<- string) error {
 	// listening to session event
 	go func() {
 		if err := session.Run(s.command); err != nil {
-			fmt.Printf(" ====> Running Error: %+v\n", err)
 			internalErrCh <- err
 		} else {
 			internalErrCh <- ErrRemoteCmdKilled
@@ -88,13 +85,10 @@ func (s *SSHRemoteCmd) Run(outputChan chan<- string) error {
 	for {
 		select {
 		case <-s.stopCh:
-			fmt.Println("Got stop signal")
 			cleanup()
-			fmt.Println("send stop signal back")
 			s.stopCh <- struct{}{}
 			return nil
 		case err := <-internalErrCh:
-			fmt.Println("internal err ch received:", err)
 			cleanup()
 			return err
 		}
@@ -106,7 +100,7 @@ func (s *SSHRemoteCmd) Run(outputChan chan<- string) error {
 func (s *SSHRemoteCmd) makeSession() (*ssh.Session, error) {
 	host, config, err := sshconfig.Config(s.sshUrl, s.sshKeyPath)
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
 
 	cl, err := sshDialTimeout("tcp", host, config, s.timeout)
@@ -141,7 +135,6 @@ func (s *SSHRemoteCmd) makeSession() (*ssh.Session, error) {
 
 func (s *SSHRemoteCmd) closeConnection() {
 	if s.sshClient != nil {
-		fmt.Println("close connection")
 		s.sshClient.Close()
 	}
 }
