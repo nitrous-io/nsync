@@ -48,7 +48,7 @@ const fileSyncDelay = 100 * time.Millisecond
 
 func init() {
 	createSymlinkIfNotExist := func() {
-		sshExeRealPath := filepath.Join(exeFolderPath, "bin", "osx64", "nitrous-ssh")
+		sshExeRealPath := filepath.Join(exeFolderPath, "nitrous-ssh")
 		sshExeSymlinkPath := filepath.Join(tempFolderPath, "nitrous-ssh")
 		if _, err := os.Stat(sshExeSymlinkPath); os.IsNotExist(err) {
 			if err := os.Symlink(sshExeRealPath, sshExeSymlinkPath); err != nil {
@@ -62,19 +62,19 @@ func init() {
 	}
 
 	if runtime.GOOS == "darwin" {
-		unisonExePath = filepath.Join(exeFolderPath, "bin", "osx64", "nitrous-unison")
+		unisonExePath = filepath.Join(exeFolderPath, "nitrous-unison")
 		createSymlinkIfNotExist()
 	} else if runtime.GOOS == "linux" && runtime.GOARCH == "amd64" {
-		unisonExePath = filepath.Join(exeFolderPath, "bin", "lin64", "nitrous-unison")
-		sshExePath = filepath.Join(exeFolderPath, "bin", "lin64", "nitrous-unison")
+		unisonExePath = filepath.Join(exeFolderPath, "nitrous-unison")
+		sshExePath = filepath.Join(exeFolderPath, "nitrous-unison")
 		createSymlinkIfNotExist()
 	} else if runtime.GOOS == "windows" {
 		var err error
-		unisonExePath, err = shortname.Get(filepath.Join(exeFolderPath, "bin", "win32", "nitrous-unison.exe"))
+		unisonExePath, err = shortname.Get(filepath.Join(exeFolderPath, "nitrous-unison.exe"))
 		if err != nil {
 			log.Panicf("Failed to genereate unison exec path: %+v", err)
 		}
-		sshExePath, err = shortname.Get(filepath.Join(exeFolderPath, "bin", "win32", "nitrous-ssh.exe"))
+		sshExePath, err = shortname.Get(filepath.Join(exeFolderPath, "nitrous-ssh.exe"))
 		if err != nil {
 			log.Panicf("Failed to genereate ssh exec path: %+v", err)
 		}

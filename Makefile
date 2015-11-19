@@ -10,17 +10,17 @@ all: osx windows linux
 osx:
 	@mkdir -p dist/
 	@echo "$(OK_COLOR)--> Compiling for OSX...$(NO_COLOR)"
-	go build -v -o dist/nsync
+	go build -v -o dist/bin/osx64/nsync
 
 windows:
 	@mkdir -p dist/
 	@echo "$(OK_COLOR)--> Compiling for Windows (win32)...$(NO_COLOR)"
-	GOARCH=386 GOOS=windows go build -v -o dist/nsync.exe
+	GOARCH=386 GOOS=windows go build -v -o dist/bin/win32/nsync.exe
 
 linux:
 	@mkdir -p dist/
 	@echo "$(OK_COLOR)--> Compiling for Linux (amd64)...$(NO_COLOR)"
-	GOARCH=amd64 GOOS=linux go build -v -o dist/nsync-linux
+	GOARCH=amd64 GOOS=linux go build -v -o dist/bin/lin64/nsync
 
 deps:
 	go get -d -v ./...
