@@ -18,9 +18,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	stopCh := make(chan struct{})
-	ns := nsync.NewNsync(os.Args[1], os.Args[2], os.Args[3], os.Args[4], stopCh)
+	stopSyncCh := make(chan struct{})
+	stopSSHTunnelCh := make(chan struct{})
+	ns := nsync.NewNsync(os.Args[1], os.Args[2], os.Args[3], os.Args[4], stopSyncCh)
 	go ns.Start()
+
+	go ns.StartSSHTennel(stopSSHTunnelCh)
 
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt, os.Kill)
@@ -28,7 +31,10 @@ func main() {
 	select {
 	case s := <-c:
 		log.Debugf("signal received: %s", s)
-		stopCh <- struct{}{}
-		<-stopCh
+		stopSyncCh <- struct{}{}
+		<-stopSyncCh
+
+		stopSSHTunnelCh <- struct{}{}
+		<-stopSSHTunnelCh
 	}
 }

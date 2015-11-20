@@ -185,7 +185,7 @@ func (ns *Nsync) Start() {
 
 	if _, err := os.Stat(localPath); os.IsNotExist(err) {
 		if err := os.MkdirAll(localPath, 0700); err != nil {
-			panic(err)
+			log.Panicf("Failed to create folder: %+v", err)
 		}
 
 		ns.shouldIgnoreArchives = true
@@ -193,7 +193,7 @@ func (ns *Nsync) Start() {
 
 	err := ns.uploadSyncIgnore()
 	if err != nil {
-		panic(err)
+		log.Panicf("Failed to upload .syncignore: %+v", err)
 	}
 
 	runSync := func() {
@@ -482,4 +482,14 @@ func (ns *Nsync) parseSyncIgnore() error {
 		log.Errorf("Failed to get .syncignore file information: %+v", err)
 	}
 	return nil
+}
+
+func (ns *Nsync) StartSSHTennel(stopCh chan struct{}) {
+	host, config, err := sshconfig.Config(ns.sshUrl, ns.sshKeyPath)
+	if err != nil {
+		log.Panicf("Failed to get ssh config information: %+v", err)
+	}
+
+	st := NewSSHTunnel(host, config, stopCh)
+	st.Start()
 }
