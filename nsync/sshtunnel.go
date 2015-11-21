@@ -17,7 +17,7 @@ type SSHTunnel struct {
 	sshConfig *ssh.ClientConfig
 
 	stopCh      chan struct{}
-	forwardings map[int]forwarding
+	forwardings map[string]forwarding
 }
 
 type forwarding struct {
@@ -26,8 +26,14 @@ type forwarding struct {
 }
 
 func (st *SSHTunnel) openPort(w http.ResponseWriter, r *http.Request) {
-	port := 4000
-	addr := fmt.Sprintf("localhost:%d", port)
+	log.Infof("port: %s, %s", r.FormValue("port"), r.Form.Get("port"))
+	port := r.Form.Get("port")
+	if port == "" {
+		log.Errorf("port is not specfied")
+		return
+	}
+
+	addr := fmt.Sprintf("localhost:%s", port)
 	localListener, err := net.Listen("tcp", addr)
 	if err != nil {
 		log.Errorf("net.Listen failed: %v", err)
@@ -38,7 +44,6 @@ func (st *SSHTunnel) openPort(w http.ResponseWriter, r *http.Request) {
 
 	go func() {
 		for {
-			fmt.Println("got request")
 			localConn, err := localListener.Accept()
 			if err != nil {
 				log.Errorf("listen.Accept failed: %v", err)
@@ -57,9 +62,6 @@ func (st *SSHTunnel) openPort(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 
-			log.Info("sshConn", sshConn)
-			log.Info("localConn", localConn)
-
 			go func() {
 				if _, err = io.Copy(sshConn, localConn); err != nil {
 					log.Errorf("io.Copy failed: %v", err)
@@ -73,6 +75,7 @@ func (st *SSHTunnel) openPort(w http.ResponseWriter, r *http.Request) {
 				if _, err = io.Copy(localConn, sshConn); err != nil {
 					log.Errorf("io.Copy failed: %v", err)
 				}
+
 				sshConn.Close()
 				localConn.Close()
 			}()
@@ -81,8 +84,11 @@ func (st *SSHTunnel) openPort(w http.ResponseWriter, r *http.Request) {
 }
 
 func (st *SSHTunnel) closePort(w http.ResponseWriter, r *http.Request) {
-	log.Info("close port")
-	port := 4000
+	port := mux.Vars(r)["port"]
+	if port == "" {
+		log.Errorf("port is not specfied")
+		return
+	}
 	if forwarding, ok := st.forwardings[port]; ok {
 		if err := forwarding.localListener.Close(); err != nil {
 			log.Error("Failed to stop port forwarding: %+v", err)
@@ -96,7 +102,7 @@ func NewSSHTunnel(sshHost string, sshConfig *ssh.ClientConfig, stopCh chan struc
 	sshTunnel.sshConfig = sshConfig
 	sshTunnel.stopCh = stopCh
 
-	sshTunnel.forwardings = make(map[int]forwarding)
+	sshTunnel.forwardings = make(map[string]forwarding)
 	return sshTunnel
 }
 
