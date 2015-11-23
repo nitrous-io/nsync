@@ -4,138 +4,74 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"net/http"
 
 	"golang.org/x/crypto/ssh"
 
 	log "github.com/Sirupsen/logrus"
-	"github.com/gorilla/mux"
 )
 
 type SSHTunnel struct {
 	sshHost   string
 	sshConfig *ssh.ClientConfig
-
-	stopCh      chan struct{}
-	forwardings map[string]forwarding
+	ports     []int
+	listeners []net.Listener
 }
 
-type forwarding struct {
-	localListener net.Listener
-	remoteConn    *net.Conn
-}
-
-func (st *SSHTunnel) openPort(w http.ResponseWriter, r *http.Request) {
-	log.Infof("port: %s, %s", r.FormValue("port"), r.Form.Get("port"))
-	port := r.Form.Get("port")
-	if port == "" {
-		log.Errorf("port is not specfied")
-		return
-	}
-
-	addr := fmt.Sprintf("localhost:%s", port)
-	localListener, err := net.Listen("tcp", addr)
-	if err != nil {
-		log.Errorf("net.Listen failed: %v", err)
-		return
-	}
-
-	st.forwardings[port] = forwarding{localListener, nil}
-
-	go func() {
-		for {
-			localConn, err := localListener.Accept()
-			if err != nil {
-				log.Errorf("listen.Accept failed: %v", err)
-				return
-			}
-
-			sshClientConn, err := ssh.Dial("tcp", st.sshHost, st.sshConfig)
-			if err != nil {
-				log.Errorf("ssh.Dial failed: %s", err)
-				return
-			}
-
-			sshConn, err := sshClientConn.Dial("tcp", addr)
-			if err != nil {
-				log.Errorf("sshClientConn.Dial failed: %s", err)
-				return
-			}
-
-			go func() {
-				if _, err = io.Copy(sshConn, localConn); err != nil {
-					log.Errorf("io.Copy failed: %v", err)
-				}
-
-				sshConn.Close()
-				localConn.Close()
-			}()
-
-			go func() {
-				if _, err = io.Copy(localConn, sshConn); err != nil {
-					log.Errorf("io.Copy failed: %v", err)
-				}
-
-				sshConn.Close()
-				localConn.Close()
-			}()
-		}
-	}()
-}
-
-func (st *SSHTunnel) closePort(w http.ResponseWriter, r *http.Request) {
-	port := mux.Vars(r)["port"]
-	if port == "" {
-		log.Errorf("port is not specfied")
-		return
-	}
-	if forwarding, ok := st.forwardings[port]; ok {
-		if err := forwarding.localListener.Close(); err != nil {
-			log.Error("Failed to stop port forwarding: %+v", err)
-		}
-	}
-}
-
-func NewSSHTunnel(sshHost string, sshConfig *ssh.ClientConfig, stopCh chan struct{}) *SSHTunnel {
+func NewSSHTunnel(sshHost string, sshConfig *ssh.ClientConfig, ports []int) *SSHTunnel {
 	sshTunnel := &SSHTunnel{}
 	sshTunnel.sshHost = sshHost
 	sshTunnel.sshConfig = sshConfig
-	sshTunnel.stopCh = stopCh
+	sshTunnel.ports = ports
 
-	sshTunnel.forwardings = make(map[string]forwarding)
 	return sshTunnel
 }
 
-// Return available port
-func getPort() int {
-	return 8090
-}
-
 func (st *SSHTunnel) Start() {
-	log.Info("starting server")
-	r := mux.NewRouter()
-	r.HandleFunc("/ports", st.openPort).Methods("POST")
-	r.HandleFunc("/ports/{port}", st.closePort).Methods("DELETE")
+	log.Infof("Start forwarding: %+v", st.ports)
 
-	server := &http.Server{
-		Addr:    fmt.Sprintf("127.0.0.1:%d", getPort()),
-		Handler: r,
-	}
-
-	errCh := make(chan error)
-
-	go func() {
-		if err := server.ListenAndServe(); err != nil {
-			log.Errorf("server is stopped due to: %+v", err)
-			errCh <- err
+	for i := 0; i < len(st.ports); i++ {
+		port := st.ports[i]
+		addr := fmt.Sprintf("localhost:%d", port)
+		listener, err := net.Listen("tcp", addr)
+		if err != nil {
+			log.Errorf("Failed to listen to %d: %v", port, err)
+			return
 		}
-	}()
 
-	select {
-	case <-st.stopCh:
-		log.Info("stops ssh tunneling.")
-		st.stopCh <- struct{}{}
-	case err := <-errCh:
-		log.Errorf("got error: %+v", err)
+		go func() {
+			for {
+				localConn, err := listener.Accept()
+				if err != nil {
+					log.Errorf("listen.Accept failed: %v", err)
+					return
+				}
+
+				sshClientConn, err := ssh.Dial("tcp", st.sshHost, st.sshConfig)
+				if err != nil {
+					log.Errorf("ssh.Dial with %s failed: %s", st.sshHost, err)
+					return
+				}
+
+				sshConn, err := sshClientConn.Dial("tcp", addr)
+				if err != nil {
+					log.Errorf("sshClientConn.Dial with %s failed: %s", addr, err)
+					return
+				}
+
+				go func() {
+					defer sshConn.Close()
+					if _, err = io.Copy(sshConn, localConn); err != nil {
+						log.Errorf("io.Copy(sshConn -> localConn) failed: %v", err)
+					}
+				}()
+
+				go func() {
+					defer localConn.Close()
+					if _, err = io.Copy(localConn, sshConn); err != nil {
+						log.Errorf("io.Copy(localConn -> sshConn) failed: %v", err)
+					}
+				}()
+			}
+		}()
 	}
 }
