@@ -13,7 +13,7 @@ func Config(sshUrl, sshKeyPath string) (string, *ssh.ClientConfig, error) {
 		return "", nil, err
 	}
 
-	key, err := readSSHKey(sshKeyPath)
+	key, err := ReadSSHKey(sshKeyPath)
 	if err != nil {
 		return "", nil, err
 	}
@@ -28,7 +28,7 @@ func Config(sshUrl, sshKeyPath string) (string, *ssh.ClientConfig, error) {
 	return u.Host, config, nil
 }
 
-func readSSHKey(sshKeyPath string) (ssh.Signer, error) {
+func ReadSSHKey(sshKeyPath string) (ssh.Signer, error) {
 	buf, err := ioutil.ReadFile(sshKeyPath)
 	if err != nil {
 		return nil, err
