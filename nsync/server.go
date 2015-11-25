@@ -159,12 +159,13 @@ func (s *Server) stopSync(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(`{"status": "OK"}`))
 }
 
-func NewServer(token, sshKeyPath, nitrousFolderPath, pubKey string) *Server {
+func NewServer(token, sshKeyPath, nitrousFolderPath, pubKey string, stopCh chan struct{}) *Server {
 	server := &Server{}
 	server.token = token
 	server.sshKeyPath = sshKeyPath
 	server.nitrousFolderPath = nitrousFolderPath
 	server.pubKey = pubKey
+	server.stopCh = stopCh
 	server.port = START_PORT
 	server.sshTunnelClients = make(map[string]*tunnel.SSHTunnel)
 	server.syncClients = make(map[string]*filesync.Sync)
@@ -214,8 +215,8 @@ func (s *Server) Start() {
 
 	select {
 	case <-s.stopCh:
-		log.Info("stops server.")
-		// Kill all child processes
+		log.Info("stopping server....")
+		s.stopAll()
 		s.stopCh <- struct{}{}
 	case err := <-errCh:
 		log.Errorf("got error: %+v", err)
@@ -235,4 +236,19 @@ func parsePorts(str string) ([]int, error) {
 	}
 
 	return ports, nil
+}
+
+func (s *Server) stopAll() {
+	log.Infof("Stopping all exisitng sync(%d) / tunneling(%d)", len(s.syncClients), len(s.sshTunnelClients))
+	for _, client := range s.syncClients {
+		if client != nil {
+			client.Stop()
+		}
+	}
+
+	for _, client := range s.sshTunnelClients {
+		if client != nil {
+			client.Stop()
+		}
+	}
 }

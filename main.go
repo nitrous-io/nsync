@@ -26,8 +26,8 @@ func main() {
 		log.Fatalf("Failed to create pid file : %+v", err)
 	}
 
-	stopSyncCh := make(chan struct{})
-	ns := nsync.NewNsync(os.Args[1], os.Args[2], stopSyncCh)
+	stopCh := make(chan struct{})
+	ns := nsync.NewNsync(os.Args[1], os.Args[2], stopCh)
 	go ns.StartServer()
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt, os.Kill)
@@ -38,10 +38,8 @@ func main() {
 		if err := deletePidFile(); err != nil {
 			log.Errorf("Failed to delete pidfile: %+v", err)
 		}
-		/*
-			stopSyncCh <- struct{}{}
-			<-stopSyncCh
-		*/
+		stopCh <- struct{}{}
+		<-stopCh
 	}
 }
 
