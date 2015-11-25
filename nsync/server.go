@@ -8,7 +8,6 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"sync"
 	"syscall"
 
 	log "github.com/Sirupsen/logrus"
@@ -31,47 +30,14 @@ type Server struct {
 	nitrousFolderPath string
 
 	stopCh           chan struct{}
-	locks            map[string]sync.Mutex
-	pairedPid        int
-	pidLock          sync.Mutex
 	port             int
 	sshTunnelClients map[string]*tunnel.SSHTunnel
 	syncClients      map[string]*filesync.Sync
 }
 
-func (s *Server) ping(w http.ResponseWriter, r *http.Request) {
-	log.Infof("ping")
-	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(`{"status": "OK"}`))
-}
-
-func (s *Server) acquire(w http.ResponseWriter, r *http.Request) {
-	r.ParseForm()
-	log.Infof("acquire")
-	s.pidLock.Lock()
-	defer s.pidLock.Unlock()
-
-	if s.pairedPid != 0 {
-		w.WriteHeader(http.StatusForbidden)
-		w.Write([]byte(fmt.Sprintf(`{"error": "current sync process is paired with %d"}`, s.pairedPid)))
-		return
-	}
-
-	pid, err := strconv.Atoi(r.FormValue("pid"))
-	if err != nil {
-		w.WriteHeader(http.StatusForbidden)
-		w.Write([]byte(fmt.Sprintf(`{"error": "invalid pid: %s"}`, r.Form.Get("pid"))))
-		return
-	}
-
-	s.pairedPid = pid
-	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(`{"status": "OK"}`))
-}
-
 func (s *Server) startPortForwarding(w http.ResponseWriter, r *http.Request) {
 	containerSlug := mux.Vars(r)["slug"]
-	log.Infof("start port forwarding for container %s", containerSlug)
+	log.Debugf("Start port forwarding for container %s", containerSlug)
 
 	sshUrl := r.FormValue("sshUrl")
 	portsInStr := r.FormValue("ports")
@@ -110,7 +76,7 @@ func (s *Server) startPortForwarding(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) stopPortForwarding(w http.ResponseWriter, r *http.Request) {
 	containerSlug := mux.Vars(r)["slug"]
-	log.Infof("stop port forwarding for container %s", containerSlug)
+	log.Debugf("Stop port forwarding for container %s", containerSlug)
 
 	if client, ok := s.sshTunnelClients[containerSlug]; ok && client != nil {
 		client.Stop()
@@ -123,7 +89,7 @@ func (s *Server) stopPortForwarding(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) startSync(w http.ResponseWriter, r *http.Request) {
 	containerSlug := mux.Vars(r)["slug"]
-	log.Infof("start syncing for container %s", containerSlug)
+	log.Debugf("Start syncing for container %s", containerSlug)
 
 	sshUrl := r.FormValue("sshUrl")
 	remotePath := r.FormValue("remotePath")
@@ -139,7 +105,23 @@ func (s *Server) startSync(w http.ResponseWriter, r *http.Request) {
 		s.syncClients[containerSlug] = nil
 	}
 
-	s.syncClients[containerSlug] = filesync.NewSync(s.token, s.sshKeyPath, s.nitrousFolderPath, containerSlug, remotePath, s.pubKey)
+	// Need to make mutex lock not to allow more than 1 sync running for the same container
+	syncClient := filesync.NewSync(s.token, s.sshKeyPath, s.nitrousFolderPath, containerSlug, remotePath, s.pubKey)
+	if err := syncClient.CreateLocalFolderIfAbsent(); err != nil {
+		log.Errorf("Failed to create folder: %s", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(fmt.Sprintf(`{"error": "failed to create a folder for sync"}`)))
+		return
+	}
+
+	if err := syncClient.UploadSyncIgnore(); err != nil {
+		log.Errorf("Failed to upload .syncignore: %s", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(fmt.Sprintf(`{"error": "failed to sync .sycnignore with remote"}`)))
+		return
+	}
+
+	s.syncClients[containerSlug] = syncClient
 	go s.syncClients[containerSlug].Start()
 
 	w.WriteHeader(http.StatusOK)
@@ -148,7 +130,7 @@ func (s *Server) startSync(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) stopSync(w http.ResponseWriter, r *http.Request) {
 	containerSlug := mux.Vars(r)["slug"]
-	log.Infof("stop syncing for container %s", containerSlug)
+	log.Debugf("Stop syncing for container %s", containerSlug)
 
 	if client, ok := s.syncClients[containerSlug]; ok && client != nil {
 		client.Stop()
@@ -175,8 +157,6 @@ func NewServer(token, sshKeyPath, nitrousFolderPath, pubKey string, stopCh chan 
 func (s *Server) Start() {
 	log.Info("starting server")
 	r := mux.NewRouter()
-	r.HandleFunc("/ping", s.ping).Methods("GET")
-	r.HandleFunc("/acquire", s.acquire).Methods("POST")
 	r.HandleFunc("/containers/{slug}/tunnel/start", s.startPortForwarding).Methods("POST")
 	r.HandleFunc("/containers/{slug}/tunnel/stop", s.stopPortForwarding).Methods("POST")
 	r.HandleFunc("/containers/{slug}/sync/start", s.startSync).Methods("POST")

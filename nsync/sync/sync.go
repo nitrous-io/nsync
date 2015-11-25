@@ -50,10 +50,10 @@ func init() {
 		sshExeSymlinkPath := filepath.Join(tempFolderPath, "nitrous-ssh")
 		if _, err := os.Stat(sshExeSymlinkPath); os.IsNotExist(err) {
 			if err := os.Symlink(sshExeRealPath, sshExeSymlinkPath); err != nil {
-				log.Panic("Failed to create symlink of nitrous-ssh: %+v", err)
+				log.Panicf("Failed to create symlink of nitrous-ssh: %+v", err)
 			}
 		} else if err != nil {
-			log.Panic("Failed to get symlink of nitrous-ssh: %+v", err)
+			log.Panicf("Failed to get symlink of nitrous-ssh: %+v", err)
 		}
 
 		sshExePath = sshExeSymlinkPath
@@ -77,7 +77,7 @@ func init() {
 			log.Panicf("Failed to genereate ssh exec path: %+v", err)
 		}
 	} else {
-		log.Panic("Unsupported platform: %s-%s!", runtime.GOOS, runtime.GOARCH)
+		log.Panicf("Unsupported platform: %s-%s!", runtime.GOOS, runtime.GOARCH)
 	}
 
 	for i, p := range ignorePathList {
@@ -98,6 +98,7 @@ type Sync struct {
 	containerSlug     string
 	remotePath        string
 	sshKeyPath        string
+	localPath         string
 	pubKey            string
 
 	sshUrl   string
@@ -149,32 +150,15 @@ func NewSync(token, sshKeyPath, nitrousFolderPath, containerSlug, remotePath, pu
 		log.Panicf("Failed to get host info: %+v", err)
 	}
 	log.Debug("host slug obtained: ", hostSlug)
+
 	s.hostSlug = hostSlug
+	s.localPath = filepath.Join(s.nitrousFolderPath, s.hostSlug, s.containerSlug)
 
 	s.stopCh = make(chan struct{})
 	return s
 }
 
-func (s *Sync) makeLocalPath() string {
-	return filepath.Join(s.nitrousFolderPath, s.hostSlug, s.containerSlug)
-}
-
 func (s *Sync) Start() {
-	localPath := s.makeLocalPath()
-
-	if _, err := os.Stat(localPath); os.IsNotExist(err) {
-		if err := os.MkdirAll(localPath, 0700); err != nil {
-			log.Panicf("Failed to create folder: %+v", err)
-		}
-
-		s.shouldIgnoreArchives = true
-	}
-
-	err := s.uploadSyncIgnore()
-	if err != nil {
-		log.Panicf("Failed to upload .syncignore: %+v", err)
-	}
-
 	runSync := func() {
 		s.syncingLock.Lock()
 		if s.syncing {
@@ -219,8 +203,8 @@ func (s *Sync) Start() {
 	log.Debugf("Watching %s/%s...", s.sshUrl, s.remotePath)
 	go s.startRemoteWatcher(remoteChan, errorChan, s.stopCh)
 
-	log.Debugf("Watching %s...", localPath)
-	if err := notify.Watch(filepath.Join(localPath, "..."), notifyChan, notify.All); err != nil {
+	log.Debugf("Watching %s...", s.localPath)
+	if err := notify.Watch(filepath.Join(s.localPath, "..."), notifyChan, notify.All); err != nil {
 		log.Fatal(err)
 	}
 	defer notify.Stop(notifyChan)
@@ -249,6 +233,22 @@ func (s *Sync) Start() {
 			}
 		}
 	}
+}
+
+func (s *Sync) CreateLocalFolderIfAbsent() error {
+	if _, err := os.Stat(s.localPath); err != nil {
+		if os.IsNotExist(err) {
+			if err := os.MkdirAll(s.localPath, 0700); err != nil {
+				return err
+			}
+		} else {
+			return err
+		}
+
+		s.shouldIgnoreArchives = true
+	}
+
+	return nil
 }
 
 func (s *Sync) performSync() {
@@ -307,7 +307,6 @@ func (s *Sync) performSync() {
 }
 
 func (s *Sync) unisonCmd() *exec.Cmd {
-	localPath := s.makeLocalPath()
 	sshRemotePath := fmt.Sprintf("%s/%s", s.sshUrl, s.remotePath)
 
 	var devNull string
@@ -336,7 +335,7 @@ func (s *Sync) unisonCmd() *exec.Cmd {
 	}
 
 	args := []string{
-		localPath,                // path to watch
+		s.localPath,              // path to watch
 		sshRemotePath,            // ssh remote path
 		"-prefer", sshRemotePath, // prefer server's copy when there is a conflict
 		"-ui=text",             // CLI mode
@@ -356,7 +355,7 @@ func (s *Sync) unisonCmd() *exec.Cmd {
 		"-ignorecase=true",
 	}
 
-	if _, err := os.Stat(localPath); os.IsNotExist(err) || s.shouldIgnoreArchives {
+	if _, err := os.Stat(s.localPath); os.IsNotExist(err) || s.shouldIgnoreArchives {
 		s.shouldIgnoreArchives = false
 		args = append(args, "-ignorearchives")
 	}
@@ -377,7 +376,7 @@ func (s *Sync) unisonCmd() *exec.Cmd {
 	cmd := exec.Command(unisonExePath, args...)
 
 	env := envmap.EnvToMap(os.Environ())
-	env["UNISON"] = filepath.Join(localPath, ".unison")
+	env["UNISON"] = filepath.Join(s.localPath, ".unison")
 
 	cmd.Env = append(cmd.Env, envmap.MapToEnv(env)...)
 	cmd.Dir = exeFolderPath
@@ -385,7 +384,7 @@ func (s *Sync) unisonCmd() *exec.Cmd {
 	return cmd
 }
 
-func (s *Sync) uploadSyncIgnore() error {
+func (s *Sync) UploadSyncIgnore() error {
 	// Copy .syncignore from remote
 	host, config, err := sshconfig.Config(s.sshUrl, s.sshKeyPath)
 	if err != nil {
@@ -404,7 +403,7 @@ func (s *Sync) uploadSyncIgnore() error {
 	}
 	defer sftp.Close()
 
-	syncIgnoreLocalPath := filepath.Join(s.makeLocalPath(), syncIgnoreFile)
+	syncIgnoreLocalPath := filepath.Join(s.localPath, syncIgnoreFile)
 	syncIgnoreRemotePath := filepath.Join(s.remotePath, syncIgnoreFile)
 
 	var localModTime, remoteModTime time.Time
@@ -451,7 +450,7 @@ func (s *Sync) uploadSyncIgnore() error {
 }
 
 func (s *Sync) parseSyncIgnore() error {
-	syncIgnorePath := filepath.Join(s.makeLocalPath(), syncIgnoreFile)
+	syncIgnorePath := filepath.Join(s.localPath, syncIgnoreFile)
 	if _, err := os.Stat(syncIgnorePath); err == nil {
 		ignoreContent, err := ioutil.ReadFile(syncIgnorePath)
 		if err != nil {
