@@ -19,8 +19,8 @@ func init() {
 	}
 }
 
-func (ns *Nsync) getUsername() (username string, err error) {
-	res, err := ns.authedGet("/api/v0/user")
+func getUsername(token string) (username string, err error) {
+	res, err := authedGet(token, "/api/v0/user")
 	if err != nil {
 		return "", err
 	}
@@ -37,8 +37,8 @@ func (ns *Nsync) getUsername() (username string, err error) {
 	return "", errors.New("username was not found")
 }
 
-func (ns *Nsync) getContainerInfo(containerSlug string) (hostId int64, sshUrl string, err error) {
-	res, err := ns.authedGet("/api/v0/containers/" + containerSlug)
+func getContainerInfo(token, containerSlug string) (hostId int64, sshUrl string, err error) {
+	res, err := authedGet(token, "/api/v0/containers/"+containerSlug)
 	if err != nil {
 		return 0, "", err
 	}
@@ -62,8 +62,8 @@ func (ns *Nsync) getContainerInfo(containerSlug string) (hostId int64, sshUrl st
 	return 0, "", errors.New("container info not found")
 }
 
-func (ns *Nsync) getHostInfo(hostId int64) (hostSlug string, hostIP string, err error) {
-	res, err := ns.authedGet(fmt.Sprintf("/api/v0/hosts/%d", hostId))
+func getHostInfo(token string, hostId int64) (hostSlug string, hostIP string, err error) {
+	res, err := authedGet(token, fmt.Sprintf("/api/v0/hosts/%d", hostId))
 	if err != nil {
 		return "", "", err
 	}
@@ -88,12 +88,12 @@ func (ns *Nsync) getHostInfo(hostId int64) (hostSlug string, hostIP string, err 
 }
 
 // POST /api/v0/containers/<containerslug>/keys  with data - key
-func (ns *Nsync) uploadPublicKey(containerSlug, pubKey string) error {
+func uploadPublicKey(token, containerSlug, pubKey string) error {
 	params := map[string]string{
 		"key": pubKey,
 	}
 
-	res, err := ns.authedPost(fmt.Sprintf("/api/v0/containers/%s/keys", containerSlug), params)
+	res, err := authedPost(token, fmt.Sprintf("/api/v0/containers/%s/keys", containerSlug), params)
 	if err != nil {
 		return err
 	}
@@ -113,15 +113,15 @@ func (ns *Nsync) uploadPublicKey(containerSlug, pubKey string) error {
 	return nil
 }
 
-func (ns *Nsync) authedGet(url string) (res *http.Response, err error) {
+func authedGet(token, url string) (res *http.Response, err error) {
 	return Get(url, map[string]string{
-		"Authorization": "Bearer " + ns.token,
+		"Authorization": "Bearer " + token,
 	})
 }
 
-func (ns *Nsync) authedPost(url string, params map[string]string) (res *http.Response, err error) {
+func authedPost(token, url string, params map[string]string) (res *http.Response, err error) {
 	return Post(url, map[string]string{
-		"Authorization": "Bearer " + ns.token,
+		"Authorization": "Bearer " + token,
 	}, params)
 }
 

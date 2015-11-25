@@ -17,8 +17,8 @@ func init() {
 }
 
 func main() {
-	if len(os.Args) < 5 {
-		log.Infof("usage: %s <nitrous-token> <nitrous-folder-path> <container-slug> <remote-path>", os.Args[0])
+	if len(os.Args) < 3 {
+		log.Infof("usage: %s <nitrous-token> <nitrous-folder-path>", os.Args[0])
 		os.Exit(1)
 	}
 
@@ -27,22 +27,21 @@ func main() {
 	}
 
 	stopSyncCh := make(chan struct{})
-	ns := nsync.NewNsync(os.Args[1], os.Args[2], os.Args[3], os.Args[4], stopSyncCh)
-	go ns.Start()
-
+	ns := nsync.NewNsync(os.Args[1], os.Args[2], stopSyncCh)
 	go ns.StartServer()
-
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt, os.Kill)
 
 	select {
 	case s := <-c:
 		log.Debugf("signal received: %s", s)
-		stopSyncCh <- struct{}{}
-		<-stopSyncCh
 		if err := deletePidFile(); err != nil {
 			log.Errorf("Failed to delete pidfile: %+v", err)
 		}
+		/*
+			stopSyncCh <- struct{}{}
+			<-stopSyncCh
+		*/
 	}
 }
 

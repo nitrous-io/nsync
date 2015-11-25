@@ -25,7 +25,7 @@ var (
 	ErrSSHAccessDenied    = errors.New("SSH access denied")
 )
 
-func (ns *Nsync) handleOutput(out string) {
+func (s *Sync) handleOutput(out string) {
 	match := outputErrRe.FindStringSubmatch(out)
 	if len(match) >= 2 {
 		errMsg := match[1]
@@ -35,60 +35,60 @@ func (ns *Nsync) handleOutput(out string) {
 			fallthrough
 		case strings.Contains(errMsg, "On-disk archives are not identical."):
 			{
-				ns.lastError = ErrInconsistent
-				ns.shouldIgnoreArchives = true
-				ns.retryDelay = 200 * time.Millisecond
+				s.lastError = ErrInconsistent
+				s.shouldIgnoreArchives = true
+				s.retryDelay = 200 * time.Millisecond
 			}
 		case strings.Contains(errMsg, "Warning: the archives are locked."):
 			{
-				ns.lastError = ErrLockedArchives
-				ns.shouldIgnoreLocks = true
-				ns.retryDelay = 200 * time.Millisecond
+				s.lastError = ErrLockedArchives
+				s.shouldIgnoreLocks = true
+				s.retryDelay = 200 * time.Millisecond
 			}
 		case strings.Contains(errMsg, "Lost connection with the server"):
 			{
-				ns.lastError = ErrConnectionLost
+				s.lastError = ErrConnectionLost
 			}
 		case strings.Contains(errMsg, "They cannot be synchronized to a case-insensitive file system."):
 			{
-				ns.lastError = ErrIdenticalFilenames
-				ns.lastErrorDetails = "Two or more files have identical names except for the case."
-				ns.retryDelay = 5 * time.Second
+				s.lastError = ErrIdenticalFilenames
+				s.lastErrorDetails = "Two or more files have identical names except for the case."
+				s.retryDelay = 5 * time.Second
 
 				match := identicalFilenameRe.FindStringSubmatch(out)
 				if len(match) >= 2 {
 					fn := match[1]
-					ns.lastErrorDetails += fmt.Sprintf(` Please rename "%s".`, fn)
+					s.lastErrorDetails += fmt.Sprintf(` Please rename "%s".`, fn)
 				}
 			}
 		case strings.Contains(out, "Malformed pattern:"):
 			{
-				ns.lastError = ErrMalformedPattern
+				s.lastError = ErrMalformedPattern
 
 				match := malformedPatternRe.FindStringSubmatch(errMsg)
 				if len(match) >= 2 {
 					patMsg := match[1]
-					ns.lastErrorDetails = patMsg
-					ns.errorIsFatal = true
+					s.lastErrorDetails = patMsg
+					s.errorIsFatal = true
 				}
 			}
 		}
 	}
 
 	if strings.Contains(out, "Uncaught exception Sys_blocked_io") {
-		ns.retryDelay = 500 * time.Millisecond
+		s.retryDelay = 500 * time.Millisecond
 	}
 
 	if strings.Contains(out, "Permission denied (") {
-		ns.lastError = ErrSSHAccessDenied
-		ns.retryDelay = 200 * time.Millisecond
+		s.lastError = ErrSSHAccessDenied
+		s.retryDelay = 200 * time.Millisecond
 	}
 
 	match = transferCountRe.FindStringSubmatch(out)
 	if len(match) >= 2 {
 		transferCount, err := strconv.Atoi(match[1])
 		if err == nil {
-			ns.lastTransferCount = transferCount
+			s.lastTransferCount = transferCount
 		}
 	}
 }

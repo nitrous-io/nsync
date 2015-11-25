@@ -1,6 +1,8 @@
 * .syncignore
-  * refactoring ssh part to share code for sftp
-  * reload when .syncignore is changed
   * don't trigger sync when the filename is listed in .syncignore
 * shortname will throw an error if file doesnt exist at path
-* remove panics
+* use remote path from params, it is hardcoded now
+* when network connection is dropped, it stops the daemon without killing remote process.
+* try to use ssh.OpenChannel for sharing one ssh connection. Need to do stress test to make sure it works correctly
+
+
