@@ -89,8 +89,9 @@ func (s *Server) startPortForwarding(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if client, ok := s.sshTunnelClients[containerSlug]; ok {
+	if client, ok := s.sshTunnelClients[containerSlug]; ok && client != nil {
 		client.Stop()
+		s.sshTunnelClients[containerSlug] = nil
 	}
 
 	host, config, err := sshconfig.Config(sshUrl, s.sshKeyPath)
@@ -111,8 +112,9 @@ func (s *Server) stopPortForwarding(w http.ResponseWriter, r *http.Request) {
 	containerSlug := mux.Vars(r)["slug"]
 	log.Infof("stop port forwarding for container %s", containerSlug)
 
-	if client, ok := s.sshTunnelClients[containerSlug]; ok {
+	if client, ok := s.sshTunnelClients[containerSlug]; ok && client != nil {
 		client.Stop()
+		s.sshTunnelClients[containerSlug] = nil
 	}
 
 	w.WriteHeader(http.StatusOK)
@@ -132,8 +134,9 @@ func (s *Server) startSync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if client, ok := s.syncClients[containerSlug]; ok {
+	if client, ok := s.syncClients[containerSlug]; ok && client != nil {
 		client.Stop()
+		s.syncClients[containerSlug] = nil
 	}
 
 	s.syncClients[containerSlug] = filesync.NewSync(s.token, s.sshKeyPath, s.nitrousFolderPath, containerSlug, remotePath, s.pubKey)
@@ -147,8 +150,9 @@ func (s *Server) stopSync(w http.ResponseWriter, r *http.Request) {
 	containerSlug := mux.Vars(r)["slug"]
 	log.Infof("stop syncing for container %s", containerSlug)
 
-	if client, ok := s.syncClients[containerSlug]; ok {
+	if client, ok := s.syncClients[containerSlug]; ok && client != nil {
 		client.Stop()
+		s.syncClients[containerSlug] = nil
 	}
 
 	w.WriteHeader(http.StatusOK)
