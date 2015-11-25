@@ -470,4 +470,5 @@ func (s *Sync) parseSyncIgnore() error {
 
 func (s *Sync) Stop() {
 	s.stopCh <- struct{}{}
+	log.Infof("sync is stopped: %s", s.containerSlug)
 }

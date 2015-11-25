@@ -6,6 +6,7 @@ import (
 	"io"
 	"time"
 
+	"github.com/Sirupsen/logrus"
 	"github.com/nitrous-io/nsync/pkg/sshconfig"
 
 	"golang.org/x/crypto/ssh"
@@ -52,7 +53,7 @@ func (s *SSHRemoteCmd) Run(outputChan chan<- string) error {
 	outputReader := io.MultiReader(stdoutReader, stderrReader)
 	scanner := bufio.NewScanner(outputReader)
 
-	internalErrCh := make(chan error)
+	internalErrCh := make(chan error, 2)
 
 	// listening to output stream
 	go func() {
@@ -65,6 +66,7 @@ func (s *SSHRemoteCmd) Run(outputChan chan<- string) error {
 		if err := scanner.Err(); err != nil {
 			internalErrCh <- err
 		}
+
 		internalErrCh <- ErrRemoteCmdKilled
 	}()
 
@@ -78,7 +80,9 @@ func (s *SSHRemoteCmd) Run(outputChan chan<- string) error {
 	}()
 
 	cleanup := func() {
-		session.Close()
+		if err := session.Close(); err != nil {
+			logrus.Errorf("Failed to close a session: %s", err)
+		}
 		s.closeConnection()
 	}
 
@@ -135,6 +139,8 @@ func (s *SSHRemoteCmd) makeSession() (*ssh.Session, error) {
 
 func (s *SSHRemoteCmd) closeConnection() {
 	if s.sshClient != nil {
-		s.sshClient.Close()
+		if err := s.sshClient.Close(); err != nil {
+			logrus.Errorf("Failed to close ssh client: %s", err)
+		}
 	}
 }
