@@ -140,6 +140,18 @@ func (s *Server) startSync(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(`{"status": "OK"}`))
 }
 
+func (s *Server) stopSync(w http.ResponseWriter, r *http.Request) {
+	containerSlug := mux.Vars(r)["slug"]
+	log.Infof("stop syncing for container %s", containerSlug)
+
+	if client, ok := s.syncClients[containerSlug]; ok {
+		client.Stop()
+	}
+
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(`{"status": "OK"}`))
+}
+
 func NewServer(token, sshKeyPath, nitrousFolderPath, pubKey string) *Server {
 	server := &Server{}
 	server.token = token
@@ -160,7 +172,7 @@ func (s *Server) Start() {
 	r.HandleFunc("/containers/{slug}/tunnel/start", s.startPortForwarding).Methods("POST")
 	r.HandleFunc("/containers/{slug}/tunnel/stop", s.stopPortForwarding).Methods("POST")
 	r.HandleFunc("/containers/{slug}/sync/start", s.startSync).Methods("POST")
-	// r.HandleFunc("/containers/{slug}/sync/stop", s.openPort).Methods("POST")
+	r.HandleFunc("/containers/{slug}/sync/stop", s.stopSync).Methods("POST")
 
 	errCh := make(chan error)
 

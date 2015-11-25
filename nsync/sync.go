@@ -85,7 +85,6 @@ func init() {
 	for i, p := range ignorePathList {
 		ignorePathList[i] = filepath.Join(strings.Split(p, "/")...)
 	}
-
 }
 
 func mustString(s string, err error) string {
@@ -154,6 +153,7 @@ func NewSync(token, sshKeyPath, nitrousFolderPath, containerSlug, remotePath, pu
 	log.Debug("host slug obtained: ", hostSlug)
 	s.hostSlug = hostSlug
 
+	s.stopCh = make(chan struct{})
 	return s
 }
 
@@ -243,6 +243,11 @@ func (s *Sync) Start() {
 		case err := <-errorChan:
 			{
 				log.Fatalf("Lost connection to server: %+v", err)
+			}
+		case <-s.stopCh:
+			{
+				log.Infof("Stop syncing...")
+				return
 			}
 		}
 	}
@@ -465,6 +470,6 @@ func (s *Sync) parseSyncIgnore() error {
 	return nil
 }
 
-func (s *Sync) Stop() error {
-	return nil
+func (s *Sync) Stop() {
+	s.stopCh <- struct{}{}
 }
