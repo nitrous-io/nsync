@@ -1,7 +1,6 @@
-package nsync
+package sync
 
 import (
-	"errors"
 	"fmt"
 	"io/ioutil"
 	"os"
@@ -17,6 +16,7 @@ import (
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/kardianos/osext"
+	"github.com/nitrous-io/nsync/nsync/nitrousapi"
 	"github.com/nitrous-io/nsync/pkg/envmap"
 	"github.com/nitrous-io/nsync/pkg/pathmatch"
 	"github.com/nitrous-io/nsync/pkg/shortname"
@@ -40,8 +40,6 @@ var (
 
 	syncIgnoreFile = ".syncignore"
 	tempFolderPath = "/tmp"
-
-	errRemoteWatcherKilled = errors.New("remote watcher killed")
 )
 
 const fileSyncDelay = 100 * time.Millisecond
@@ -134,11 +132,11 @@ func NewSync(token, sshKeyPath, nitrousFolderPath, containerSlug, remotePath, pu
 		pubKey:            pubKey,
 	}
 
-	if err := uploadPublicKey(s.token, s.containerSlug, s.pubKey); err != nil {
+	if err := nitrousapi.UploadPublicKey(s.token, s.containerSlug, s.pubKey); err != nil {
 		log.Panicf("sync: Failed upload ssh key: %+v ", err)
 	}
 
-	hostId, sshUrl, err := getContainerInfo(s.token, s.containerSlug)
+	hostId, sshUrl, err := nitrousapi.GetContainerInfo(s.token, s.containerSlug)
 	if err != nil {
 		log.Panicf("Failed to get container info: %+v", err)
 	}
@@ -146,7 +144,7 @@ func NewSync(token, sshKeyPath, nitrousFolderPath, containerSlug, remotePath, pu
 	log.Debug("SSH URL obtained: ", sshUrl)
 	s.sshUrl = sshUrl
 
-	hostSlug, _, err := getHostInfo(token, hostId)
+	hostSlug, _, err := nitrousapi.GetHostInfo(token, hostId)
 	if err != nil {
 		log.Panicf("Failed to get host info: %+v", err)
 	}
@@ -285,7 +283,7 @@ func (s *Sync) performSync() {
 		}
 
 		if s.lastError == ErrSSHAccessDenied {
-			if err := uploadPublicKey(s.token, s.containerSlug, s.pubKey); err != nil {
+			if err := nitrousapi.UploadPublicKey(s.token, s.containerSlug, s.pubKey); err != nil {
 				log.Panicf("sync: Failed upload ssh key: %+v ", err)
 			}
 		}

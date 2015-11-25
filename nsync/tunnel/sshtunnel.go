@@ -1,4 +1,4 @@
-package nsync
+package tunnel
 
 import (
 	"errors"

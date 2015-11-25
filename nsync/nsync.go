@@ -4,6 +4,7 @@ import (
 	"path/filepath"
 
 	log "github.com/Sirupsen/logrus"
+	"github.com/nitrous-io/nsync/nsync/nitrousapi"
 )
 
 type Nsync struct {
@@ -22,7 +23,7 @@ func NewNsync(token, nitrousFolderPath string, stopCh chan struct{}) *Nsync {
 		stopCh:            stopCh,
 	}
 
-	username, err := getUsername(token)
+	username, err := nitrousapi.GetUsername(token)
 	if err != nil {
 		log.Panicf("Failed to get username: %+v", err)
 	}

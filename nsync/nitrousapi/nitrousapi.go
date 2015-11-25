@@ -1,4 +1,4 @@
-package nsync
+package nitrousapi
 
 import (
 	"encoding/json"
@@ -19,7 +19,7 @@ func init() {
 	}
 }
 
-func getUsername(token string) (username string, err error) {
+func GetUsername(token string) (username string, err error) {
 	res, err := authedGet(token, "/api/v0/user")
 	if err != nil {
 		return "", err
@@ -37,7 +37,7 @@ func getUsername(token string) (username string, err error) {
 	return "", errors.New("username was not found")
 }
 
-func getContainerInfo(token, containerSlug string) (hostId int64, sshUrl string, err error) {
+func GetContainerInfo(token, containerSlug string) (hostId int64, sshUrl string, err error) {
 	res, err := authedGet(token, "/api/v0/containers/"+containerSlug)
 	if err != nil {
 		return 0, "", err
@@ -62,7 +62,7 @@ func getContainerInfo(token, containerSlug string) (hostId int64, sshUrl string,
 	return 0, "", errors.New("container info not found")
 }
 
-func getHostInfo(token string, hostId int64) (hostSlug string, hostIP string, err error) {
+func GetHostInfo(token string, hostId int64) (hostSlug string, hostIP string, err error) {
 	res, err := authedGet(token, fmt.Sprintf("/api/v0/hosts/%d", hostId))
 	if err != nil {
 		return "", "", err
@@ -88,7 +88,7 @@ func getHostInfo(token string, hostId int64) (hostSlug string, hostIP string, er
 }
 
 // POST /api/v0/containers/<containerslug>/keys  with data - key
-func uploadPublicKey(token, containerSlug, pubKey string) error {
+func UploadPublicKey(token, containerSlug, pubKey string) error {
 	params := map[string]string{
 		"key": pubKey,
 	}

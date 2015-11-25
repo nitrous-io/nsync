@@ -13,6 +13,8 @@ import (
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/gorilla/mux"
+	filesync "github.com/nitrous-io/nsync/nsync/sync"
+	"github.com/nitrous-io/nsync/nsync/tunnel"
 	"github.com/nitrous-io/nsync/pkg/sshconfig"
 )
 
@@ -20,6 +22,7 @@ const START_PORT = 64876
 const MAX_PORT = 65535
 
 var errNoAvailablePorts = errors.New("Could't find free port")
+var errInvalidPortsArgument = errors.New("Given ports parameter is invalid")
 
 type Server struct {
 	token             string
@@ -32,8 +35,8 @@ type Server struct {
 	pairedPid        int
 	pidLock          sync.Mutex
 	port             int
-	sshTunnelClients map[string]*SSHTunnel
-	syncClients      map[string]*Sync
+	sshTunnelClients map[string]*tunnel.SSHTunnel
+	syncClients      map[string]*filesync.Sync
 }
 
 func (s *Server) ping(w http.ResponseWriter, r *http.Request) {
@@ -97,7 +100,7 @@ func (s *Server) startPortForwarding(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.sshTunnelClients[containerSlug] = NewSSHTunnel(host, config, ports)
+	s.sshTunnelClients[containerSlug] = tunnel.NewSSHTunnel(host, config, ports)
 	go s.sshTunnelClients[containerSlug].Start()
 
 	w.WriteHeader(http.StatusOK)
@@ -133,7 +136,7 @@ func (s *Server) startSync(w http.ResponseWriter, r *http.Request) {
 		client.Stop()
 	}
 
-	s.syncClients[containerSlug] = NewSync(s.token, s.sshKeyPath, s.nitrousFolderPath, containerSlug, remotePath, s.pubKey)
+	s.syncClients[containerSlug] = filesync.NewSync(s.token, s.sshKeyPath, s.nitrousFolderPath, containerSlug, remotePath, s.pubKey)
 	go s.syncClients[containerSlug].Start()
 
 	w.WriteHeader(http.StatusOK)
@@ -159,8 +162,8 @@ func NewServer(token, sshKeyPath, nitrousFolderPath, pubKey string) *Server {
 	server.nitrousFolderPath = nitrousFolderPath
 	server.pubKey = pubKey
 	server.port = START_PORT
-	server.sshTunnelClients = make(map[string]*SSHTunnel)
-	server.syncClients = make(map[string]*Sync)
+	server.sshTunnelClients = make(map[string]*tunnel.SSHTunnel)
+	server.syncClients = make(map[string]*filesync.Sync)
 	return server
 }
 
@@ -221,7 +224,7 @@ func parsePorts(str string) ([]int, error) {
 	for i := 0; i < len(portsInStr); i++ {
 		port, err := strconv.Atoi(portsInStr[i])
 		if err != nil {
-			return nil, errInvalidPorts
+			return nil, errInvalidPortsArgument
 		}
 
 		ports = append(ports, port)
