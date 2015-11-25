@@ -6,7 +6,9 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime/pprof"
 	"strconv"
+	"syscall"
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/nitrous-io/nsync/nsync"
@@ -30,16 +32,28 @@ func main() {
 	ns := nsync.NewNsync(os.Args[1], os.Args[2], stopCh)
 	go ns.StartServer()
 	c := make(chan os.Signal, 1)
-	signal.Notify(c, os.Interrupt, os.Kill)
+	signal.Notify(c, os.Interrupt, os.Kill, syscall.SIGUSR1)
 
-	select {
-	case s := <-c:
-		log.Debugf("signal received: %s", s)
-		if err := deletePidFile(); err != nil {
-			log.Errorf("Failed to delete pidfile: %+v", err)
+	for {
+		select {
+		case s := <-c:
+			log.Debugf("signal received: %s", s)
+
+			switch s {
+			case syscall.SIGUSR1:
+				prof := pprof.Lookup("goroutine")
+				log.Infof("=== BEGIN goroutine stack dump ====")
+				prof.WriteTo(log.StandardLogger().Out, 2)
+				log.Infof("=== END goroutine stack dump ===")
+			case os.Interrupt, os.Kill:
+				if err := deletePidFile(); err != nil {
+					log.Errorf("Failed to delete pidfile: %+v", err)
+				}
+				stopCh <- struct{}{}
+				<-stopCh
+				os.Exit(0)
+			}
 		}
-		stopCh <- struct{}{}
-		<-stopCh
 	}
 }
 
