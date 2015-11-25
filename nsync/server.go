@@ -7,11 +7,13 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/gorilla/mux"
+	"github.com/nitrous-io/nsync/pkg/sshconfig"
 )
 
 const START_PORT = 64876
@@ -20,18 +22,14 @@ const MAX_PORT = 65535
 var errNoAvailablePorts = errors.New("Could't find free port")
 
 type Server struct {
-	locks     map[string]sync.Mutex
-	stopCh    chan struct{}
-	pairedPid int
-	pidLock   sync.Mutex
-	port      int
-}
+	sshKeyPath string
 
-func (s *Server) startSync(w http.ResponseWriter, r *http.Request) {
-	containerSlug := mux.Vars(r)["slug"]
-	log.Infof("start syncing for container %s", containerSlug)
-	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(`{"status": "OK"}`))
+	stopCh           chan struct{}
+	locks            map[string]sync.Mutex
+	pairedPid        int
+	pidLock          sync.Mutex
+	port             int
+	sshTunnelClients map[string]*SSHTunnel
 }
 
 func (s *Server) ping(w http.ResponseWriter, r *http.Request) {
@@ -64,9 +62,61 @@ func (s *Server) acquire(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(`{"status": "OK"}`))
 }
 
-func NewServer() *Server {
+func (s *Server) startPortForwarding(w http.ResponseWriter, r *http.Request) {
+	containerSlug := mux.Vars(r)["slug"]
+	log.Infof("start syncing for container %s", containerSlug)
+
+	sshUrl := r.FormValue("sshUrl")
+	portsInStr := r.FormValue("ports")
+
+	if portsInStr == "" || sshUrl == "" {
+		w.WriteHeader(http.StatusForbidden)
+		w.Write([]byte(fmt.Sprintf(`{"error": "arguments are not sufficient"}`)))
+		return
+	}
+
+	ports, err := parsePorts(portsInStr)
+	if err != nil {
+		w.WriteHeader(http.StatusForbidden)
+		w.Write([]byte(fmt.Sprintf(`{"error": "invalid ports"}`)))
+		return
+	}
+
+	if client, ok := s.sshTunnelClients[containerSlug]; ok {
+		client.Stop()
+	}
+
+	host, config, err := sshconfig.Config(sshUrl, s.sshKeyPath)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(fmt.Sprintf(`{"error": "failed to get ssh config"}`)))
+		return
+	}
+
+	s.sshTunnelClients[containerSlug] = NewSSHTunnel(host, config, ports)
+	go s.sshTunnelClients[containerSlug].Start()
+
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(`{"status": "OK"}`))
+}
+
+func (s *Server) stopPortForwarding(w http.ResponseWriter, r *http.Request) {
+	containerSlug := mux.Vars(r)["slug"]
+	log.Infof("stop syncing for container %s", containerSlug)
+
+	if client, ok := s.sshTunnelClients[containerSlug]; ok {
+		client.Stop()
+	}
+
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(`{"status": "OK"}`))
+}
+
+func NewServer(sshKeyPath string) *Server {
 	server := &Server{}
+	server.sshKeyPath = sshKeyPath
 	server.port = START_PORT
+	server.sshTunnelClients = make(map[string]*SSHTunnel)
 	return server
 }
 
@@ -75,7 +125,10 @@ func (s *Server) Start() {
 	r := mux.NewRouter()
 	r.HandleFunc("/ping", s.ping).Methods("GET")
 	r.HandleFunc("/acquire", s.acquire).Methods("POST")
-	r.HandleFunc("/containers/{slug}", s.startSync).Methods("POST")
+	r.HandleFunc("/containers/{containerSlug}/tunnel/start", s.startPortForwarding).Methods("POST")
+	r.HandleFunc("/containers/{containerSlug}/tunnel/stop", s.stopPortForwarding).Methods("POST")
+	// r.HandleFunc("/containers/{slug}/sync/start", s.openPort).Methods("POST")
+	// r.HandleFunc("/containers/{slug}/sync/stop", s.openPort).Methods("POST")
 
 	errCh := make(chan error)
 
@@ -116,4 +169,19 @@ func (s *Server) Start() {
 	case err := <-errCh:
 		log.Errorf("got error: %+v", err)
 	}
+}
+
+func parsePorts(str string) ([]int, error) {
+	var ports []int
+	portsInStr := strings.Split(str, ",")
+	for i := 0; i < len(portsInStr); i++ {
+		port, err := strconv.Atoi(portsInStr[i])
+		if err != nil {
+			return nil, errInvalidPorts
+		}
+
+		ports = append(ports, port)
+	}
+
+	return ports, nil
 }

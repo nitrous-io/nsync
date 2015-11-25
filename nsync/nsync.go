@@ -484,12 +484,6 @@ func (ns *Nsync) parseSyncIgnore() error {
 	return nil
 }
 
-func (ns *Nsync) StartSSHTennel(ports []int) {
-	host, config, err := sshconfig.Config(ns.sshUrl, ns.sshKeyPath)
-	if err != nil {
-		log.Fatalf("Failed to get ssh config information: %+v", err)
-	}
-
-	st := NewSSHTunnel(host, config, ports)
-	st.Start()
+func (ns *Nsync) StartServer() {
+	go NewServer(ns.sshKeyPath).Start()
 }
