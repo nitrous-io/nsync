@@ -101,7 +101,9 @@ func (s *Server) startSync(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if client, ok := s.syncClients[containerSlug]; ok && client != nil {
-		client.Stop()
+		if !client.IsStopped() {
+			client.Stop()
+		}
 		s.syncClients[containerSlug] = nil
 	}
 
@@ -221,7 +223,7 @@ func parsePorts(str string) ([]int, error) {
 func (s *Server) stopAll() {
 	log.Infof("Stopping all exisitng sync(%d) / tunneling(%d)", len(s.syncClients), len(s.sshTunnelClients))
 	for _, client := range s.syncClients {
-		if client != nil {
+		if client != nil && !client.IsStopped() {
 			client.Stop()
 		}
 	}

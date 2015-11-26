@@ -120,7 +120,9 @@ type Sync struct {
 
 	syncIgnoreList []string
 
-	stopCh chan struct{}
+	state   string
+	errorCh chan error
+	stopCh  chan struct{}
 }
 
 func NewSync(token, sshKeyPath, nitrousFolderPath, containerSlug, remotePath, pubKey string) *Sync {
@@ -131,6 +133,7 @@ func NewSync(token, sshKeyPath, nitrousFolderPath, containerSlug, remotePath, pu
 		containerSlug:     containerSlug,
 		remotePath:        remotePath,
 		pubKey:            pubKey,
+		state:             "created",
 	}
 
 	if err := nitrousapi.UploadPublicKey(s.token, s.containerSlug, s.pubKey); err != nil {
@@ -154,11 +157,14 @@ func NewSync(token, sshKeyPath, nitrousFolderPath, containerSlug, remotePath, pu
 	s.hostSlug = hostSlug
 	s.localPath = filepath.Join(s.nitrousFolderPath, s.hostSlug, s.containerSlug)
 
+	s.errorCh = make(chan error)
 	s.stopCh = make(chan struct{})
+
 	return s
 }
 
 func (s *Sync) Start() {
+	s.state = "started"
 	runSync := func() {
 		s.syncingLock.Lock()
 		if s.syncing {
@@ -205,30 +211,38 @@ func (s *Sync) Start() {
 
 	log.Debugf("Watching %s...", s.localPath)
 	if err := notify.Watch(filepath.Join(s.localPath, "..."), notifyChan, notify.All); err != nil {
-		log.Fatal(err)
+		s.errorCh <- err
 	}
 	defer notify.Stop(notifyChan)
 
 	for {
 		select {
-		case change := <-notifyChan: // remote file system change
+		case change := <-notifyChan: // local file system change
 			{
 				handleChange(change.Path(), true)
 			}
-		case change := <-remoteChan:
+		case err := <-s.errorCh: // local file sync error
+			{
+				log.Errorf("Local watcher is terminated: %+v", err)
+				s.Stop()
+				return
+			}
+		case change := <-remoteChan: // remote file system change
 			{
 				match := remoteChangeRe.FindStringSubmatch(change)
 				if len(match) >= 2 {
 					handleChange(match[1], false)
 				}
 			}
-		case err := <-errorChan:
+		case err := <-errorChan: // remote watcher error
 			{
-				log.Fatalf("Lost connection to server: %+v", err)
+				log.Errorf("Lost connection to server: %+v", err)
+				s.Stop()
+				return
 			}
-		case <-s.stopCh:
+		case <-s.stopCh: // stop event from main process
 			{
-				log.Infof("Stop syncing...")
+				log.Infof("Stopping syncing...")
 				return
 			}
 		}
@@ -255,7 +269,8 @@ func (s *Sync) performSync() {
 	log.Debug("sync: Begin...")
 	err := s.parseSyncIgnore()
 	if err != nil {
-		log.Panicf("sync: Failed to parse .syncignore: %+v", err)
+		// Only returns error since we can still sync with previous value or empty value.
+		log.Warnf("sync: Failed to parse .syncignore: %+v", err)
 	}
 
 	s.lastError = nil
@@ -265,11 +280,17 @@ func (s *Sync) performSync() {
 	s.dirty = false
 	s.lastTransferCount = -1
 
-	cmd := s.unisonCmd()
+	cmd, err := s.unisonCmd()
+	if err != nil {
+		log.Errorf("sync: Failed to compile unison command options: %s", err)
+		s.lastError = err
+	}
+
 	out, err := cmd.CombinedOutput()
 	outStr := string(out)
 
 	if err != nil {
+		log.Errorf("sync: Failed to run unison: %s", err)
 		s.lastError = err
 	}
 
@@ -278,14 +299,16 @@ func (s *Sync) performSync() {
 	if s.lastError != nil {
 		log.Errorf("sync: Error occurred: %v", s.lastError)
 
-		if s.errorIsFatal {
-			log.Fatal("Error is fatal! Exiting!")
-		}
-
 		if s.lastError == ErrSSHAccessDenied {
 			if err := nitrousapi.UploadPublicKey(s.token, s.containerSlug, s.pubKey); err != nil {
 				log.Panicf("sync: Failed upload ssh key: %+v ", err)
 			}
+		}
+
+		if s.errorIsFatal {
+			log.Fatal("Error is fatal!: %s", s.lastError)
+			s.errorCh <- s.lastError
+			return
 		}
 
 		time.AfterFunc(s.retryDelay, func() {
@@ -306,7 +329,7 @@ func (s *Sync) performSync() {
 	}
 }
 
-func (s *Sync) unisonCmd() *exec.Cmd {
+func (s *Sync) unisonCmd() (*exec.Cmd, error) {
 	sshRemotePath := fmt.Sprintf("%s/%s", s.sshUrl, s.remotePath)
 
 	var devNull string
@@ -321,7 +344,7 @@ func (s *Sync) unisonCmd() *exec.Cmd {
 		var err error
 		sshKeyPathEscaped, err = shortname.Get(s.sshKeyPath)
 		if err != nil {
-			log.Panicf("sync: Failed get short name for ssh key path: %+v ", err)
+			return nil, err
 		}
 	} else {
 		sshKeyPathEscaped = strings.Replace(strings.Replace(s.sshKeyPath, `\`, `\\`, -1), " ", `\ `, -1)
@@ -381,7 +404,7 @@ func (s *Sync) unisonCmd() *exec.Cmd {
 	cmd.Env = append(cmd.Env, envmap.MapToEnv(env)...)
 	cmd.Dir = exeFolderPath
 
-	return cmd
+	return cmd, nil
 }
 
 func (s *Sync) UploadSyncIgnore() error {
@@ -468,6 +491,11 @@ func (s *Sync) parseSyncIgnore() error {
 }
 
 func (s *Sync) Stop() {
+	s.state = "stopped"
 	s.stopCh <- struct{}{}
 	log.Infof("sync is stopped: %s", s.containerSlug)
+}
+
+func (s Sync) IsStopped() bool {
+	return s.state == "stopped"
 }
