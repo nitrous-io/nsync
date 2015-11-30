@@ -244,20 +244,23 @@ func (s *Server) Start() {
 
 	errCh := make(chan error)
 
+	started := false
+	server := &http.Server{
+		Addr:    fmt.Sprintf("127.0.0.1:%d", s.port),
+		Handler: r,
+		ConnState: func(conn net.Conn, state http.ConnState) {
+			if !started && state == http.StateActive {
+				started = true
+				log.Infof("listenting to %d", s.port)
+			}
+		},
+	}
 	go func() {
-		server := &http.Server{
-			Addr:    fmt.Sprintf("127.0.0.1:%d", s.port),
-			Handler: r,
-		}
-
 		for s.port <= MAX_PORT {
 			if err := server.ListenAndServe(); err != nil {
 				if err.(*net.OpError).Err.(*os.SyscallError).Err == syscall.EADDRINUSE {
 					s.port = s.port + 1
-					server = &http.Server{
-						Addr:    fmt.Sprintf("127.0.0.1:%d", s.port),
-						Handler: r,
-					}
+					server.Addr = fmt.Sprintf("127.0.0.1:%d", s.port)
 					log.Infof("port is in use. trying with %d", s.port)
 					continue
 				}
