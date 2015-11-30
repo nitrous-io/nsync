@@ -1,10 +1,6 @@
 package event
 
-import (
-	"encoding/json"
-
-	"github.com/Sirupsen/logrus"
-)
+import "encoding/json"
 
 type Event struct {
 	MsgCh chan []byte
@@ -30,8 +26,6 @@ func (e *Event) Send(name string, data interface{}) error {
 	if err != nil {
 		return err
 	}
-
-	logrus.Infof("b: %+v", string(b))
 
 	e.MsgCh <- b
 	return nil
