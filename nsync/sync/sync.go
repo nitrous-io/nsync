@@ -44,6 +44,7 @@ var (
 )
 
 const fileSyncDelay = 100 * time.Millisecond
+const maxRemoteWatcherRetry = 5
 
 func init() {
 	createSymlinkIfNotExist := func() {
@@ -113,10 +114,11 @@ type Sync struct {
 	shouldIgnoreArchives bool
 	shouldIgnoreLocks    bool
 
-	lastError        error
-	lastErrorDetails string
-	errorIsFatal     bool
-	retryDelay       time.Duration
+	lastError               error
+	lastErrorDetails        string
+	errorIsFatal            bool
+	retryDelay              time.Duration
+	remoteWatcherRetryCount int
 
 	lastTransferCount int
 
@@ -162,6 +164,7 @@ func NewSync(token, sshKeyPath, nitrousFolderPath, containerSlug, remotePath, pu
 
 	s.errorCh = make(chan error)
 	s.stopCh = make(chan struct{})
+	s.remoteWatcherRetryCount = 0
 
 	return s
 }
@@ -237,6 +240,7 @@ func (s *Sync) Start() {
 			}
 		case change := <-remoteChan: // remote file system change
 			{
+				s.remoteWatcherRetryCount = 0 // reset the counter
 				match := remoteChangeRe.FindStringSubmatch(change)
 				if len(match) >= 2 {
 					handleChange(match[1], false)
@@ -245,8 +249,16 @@ func (s *Sync) Start() {
 		case err := <-errorChan: // remote watcher error
 			{
 				log.Errorf("Lost connection to server: %+v", err)
-				s.Stop()
-				return
+				if s.remoteWatcherRetryCount < maxRemoteWatcherRetry {
+					time.Sleep(5 * time.Second)
+					go s.startRemoteWatcher(remoteChan, errorChan, s.stopCh)
+					s.remoteWatcherRetryCount++
+					log.Infof("Retrying to connect to server: %d", s.remoteWatcherRetryCount)
+				} else {
+					log.Info("It reached limit of retrying. Stopping sync")
+					s.Stop()
+					return
+				}
 			}
 		case <-s.stopCh: // stop event from main process
 			{
@@ -500,7 +512,7 @@ func (s *Sync) parseSyncIgnore() error {
 
 func (s *Sync) Stop() {
 	s.state = "stopped"
-	s.event.Send("container.started-sync", map[string]string{
+	s.event.Send("container.stopped-sync", map[string]string{
 		"slug": s.containerSlug,
 	})
 	s.stopCh <- struct{}{}
