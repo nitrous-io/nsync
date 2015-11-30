@@ -35,7 +35,15 @@ func NewSSHRemoteCmd(sshUrl, command, sshKeyPath string, timeout time.Duration, 
 }
 
 func (s *SSHRemoteCmd) Run(outputChan chan<- string) error {
-	session, err := s.makeSession()
+	var session *ssh.Session
+	var err error
+
+	if s.timeout == 0 {
+		session, err = s.makeSession()
+	} else {
+		session, err = s.makeSessionWithKeepalive()
+	}
+
 	if err != nil {
 		return err
 	}
@@ -59,7 +67,9 @@ func (s *SSHRemoteCmd) Run(outputChan chan<- string) error {
 	go func() {
 		for scanner.Scan() {
 			if text := scanner.Text(); text != "" {
-				outputChan <- text
+				if outputChan != nil {
+					outputChan <- text
+				}
 			}
 		}
 
@@ -102,6 +112,30 @@ func (s *SSHRemoteCmd) Run(outputChan chan<- string) error {
 }
 
 func (s *SSHRemoteCmd) makeSession() (*ssh.Session, error) {
+	host, config, err := sshconfig.Config(s.sshUrl, s.sshKeyPath)
+	if err != nil {
+		return nil, err
+	}
+
+	cl, err := ssh.Dial("tcp", host, config)
+	if err != nil {
+		return nil, err
+	}
+
+	if s.sshClient != nil {
+		s.sshClient.Close()
+	}
+
+	s.sshClient = cl
+	session, err := cl.NewSession()
+	if err != nil {
+		return nil, err
+	}
+
+	return session, nil
+}
+
+func (s *SSHRemoteCmd) makeSessionWithKeepalive() (*ssh.Session, error) {
 	host, config, err := sshconfig.Config(s.sshUrl, s.sshKeyPath)
 	if err != nil {
 		return nil, err
