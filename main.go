@@ -1,18 +1,18 @@
 package main
 
 import (
-	"errors"
-	"io/ioutil"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"runtime/pprof"
-	"strconv"
 	"syscall"
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/nitrous-io/nsync/nsync"
+	"github.com/nitrous-io/nsync/pkg/pidfile"
 )
+
+var pidfileLock *pidfile.LockFile
 
 func init() {
 	log.SetLevel(log.DebugLevel)
@@ -58,22 +58,16 @@ func main() {
 }
 
 func createPidFile() error {
-	pidFilePath := filepath.Join(os.Args[2], ".nsync.pid")
+	var err error
 
+	pidFilePath := filepath.Join(os.Args[2], ".nsync.pid")
 	log.Infof("PidFile: %s", pidFilePath)
 
-	_, err := os.Stat(pidFilePath)
-	if err == nil {
-		return errors.New("pid file already exists.")
-	}
-
-	if !os.IsNotExist(err) {
+	if pidfileLock, err = pidfile.OpenLockFile(pidFilePath, 0600); err != nil {
 		return err
 	}
 
-	pid := os.Getpid()
-	pidBytes := []byte(strconv.Itoa(pid))
-	if err = ioutil.WriteFile(pidFilePath, pidBytes, 0644); err != nil {
+	if err = pidfileLock.Lock(); err != nil {
 		return err
 	}
 
@@ -81,6 +75,9 @@ func createPidFile() error {
 }
 
 func deletePidFile() error {
-	pidFilePath := filepath.Join(os.Args[2], ".nsync.pid")
-	return os.Remove(pidFilePath)
+	if err := pidfileLock.Remove(); err != nil {
+		return err
+	}
+
+	return nil
 }
