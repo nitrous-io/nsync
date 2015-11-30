@@ -1,8 +1,11 @@
+* try to use ssh.OpenChannel for sharing one ssh connection. Need to do stress test to make sure it works correctly
+* when network connection is dropped, it stops the daemon without killing remote process.
+* Don't panic when it fails to sync
+  1. Retry
+  2. Stop after a few retries and return errors via socket
+* Expose listening socket in log
+* Ignore second request if current sync/port forwarding is running for given container
+* Adding tests
 * .syncignore
   * don't trigger sync when the filename is listed in .syncignore
-* shortname will throw an error if file doesnt exist at path
-* use remote path from params, it is hardcoded now
-* when network connection is dropped, it stops the daemon without killing remote process.
-* try to use ssh.OpenChannel for sharing one ssh connection. Need to do stress test to make sure it works correctly
-
-
+* Fix pid issue: Check if pid exists in running processes.
