@@ -194,7 +194,7 @@ func (s *Server) writePump(conn *websocket.Conn) {
 	for {
 		select {
 		case message, ok := <-s.event.MsgCh:
-			log.Debugf("got message: %+v", message)
+			log.Debugf("got message: %+v", string(message))
 			if !ok {
 				s.writeToConn(conn, websocket.CloseMessage, []byte{})
 				return
