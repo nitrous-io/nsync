@@ -9,9 +9,12 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/gorilla/mux"
+	"github.com/gorilla/websocket"
+	"github.com/nitrous-io/nsync/nsync/event"
 	filesync "github.com/nitrous-io/nsync/nsync/sync"
 	"github.com/nitrous-io/nsync/nsync/tunnel"
 	"github.com/nitrous-io/nsync/pkg/sshconfig"
@@ -20,8 +23,30 @@ import (
 const START_PORT = 64876
 const MAX_PORT = 65535
 
-var errNoAvailablePorts = errors.New("Could't find free port")
-var errInvalidPortsArgument = errors.New("Given ports parameter is invalid")
+var (
+	upgrader = websocket.Upgrader{
+		ReadBufferSize:  4096,
+		WriteBufferSize: 4096,
+		Error: func(w http.ResponseWriter, r *http.Request, status int, reason error) {
+			log.Errorf("ws error: (%d) %s", status, reason)
+		},
+		CheckOrigin: func(r *http.Request) bool {
+			return true
+		},
+	}
+
+	// Time allowed to write a message to the peer.
+	writeWait = 10 * time.Second
+	// Time allowed to read the next pong message from the peer.
+	pongWait = 60 * time.Second
+	// Send pings to peer with this period. Must be less than pongWait.
+	pingPeriod = (pongWait * 9) / 10
+
+	errNoAvailablePorts     = errors.New("Could't find free port")
+	errInvalidPortsArgument = errors.New("Given ports parameter is invalid")
+
+	messageCapacity = 256
+)
 
 type Server struct {
 	token             string
@@ -33,6 +58,9 @@ type Server struct {
 	port             int
 	sshTunnelClients map[string]*tunnel.SSHTunnel
 	syncClients      map[string]*filesync.Sync
+
+	message chan []byte
+	event   *event.Event
 }
 
 func (s *Server) startPortForwarding(w http.ResponseWriter, r *http.Request) {
@@ -67,7 +95,7 @@ func (s *Server) startPortForwarding(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.sshTunnelClients[containerSlug] = tunnel.NewSSHTunnel(host, config, ports)
+	s.sshTunnelClients[containerSlug] = tunnel.NewSSHTunnel(containerSlug, host, config, ports, s.event)
 	go s.sshTunnelClients[containerSlug].Start()
 
 	w.WriteHeader(http.StatusOK)
@@ -107,8 +135,8 @@ func (s *Server) startSync(w http.ResponseWriter, r *http.Request) {
 		s.syncClients[containerSlug] = nil
 	}
 
-	// Need to make mutex lock not to allow more than 1 sync running for the same container
-	syncClient := filesync.NewSync(s.token, s.sshKeyPath, s.nitrousFolderPath, containerSlug, remotePath, s.pubKey)
+	// TODO: Need to make mutex lock not to allow more than 1 sync running for the same container
+	syncClient := filesync.NewSync(s.token, s.sshKeyPath, s.nitrousFolderPath, containerSlug, remotePath, s.pubKey, s.event)
 	if err := syncClient.CreateLocalFolderIfAbsent(); err != nil {
 		log.Errorf("Failed to create folder: %s", err)
 		w.WriteHeader(http.StatusInternalServerError)
@@ -143,6 +171,54 @@ func (s *Server) stopSync(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(`{"status": "OK"}`))
 }
 
+func (s *Server) subscribe(w http.ResponseWriter, r *http.Request) {
+	log.Debugf("subscribe event")
+
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		log.Errorf("Upgrade failed: %s", err)
+		return
+	}
+
+	go s.writePump(conn)
+}
+
+func (s *Server) writePump(conn *websocket.Conn) {
+	ticker := time.NewTicker(pingPeriod)
+
+	defer func() {
+		ticker.Stop()
+		conn.Close()
+	}()
+
+	for {
+		select {
+		case message, ok := <-s.event.MsgCh:
+			log.Debugf("got message: %+v", message)
+			if !ok {
+				s.writeToConn(conn, websocket.CloseMessage, []byte{})
+				return
+			}
+			if err := s.writeToConn(conn, websocket.TextMessage, message); err != nil {
+				log.Errorf("Failed to send: %+v %+v", message, err)
+				return
+			}
+		case <-ticker.C:
+			if err := s.writeToConn(conn, websocket.PingMessage, []byte{}); err != nil {
+				log.Errorf("Failed to ping: %+v", err)
+				return
+			}
+		}
+	}
+}
+
+func (s *Server) writeToConn(conn *websocket.Conn, mt int, payload []byte) error {
+	if err := conn.SetWriteDeadline(time.Now().Add(writeWait)); err != nil {
+		log.Errorf("Failed on conn.SetWriteDeadline: %s", err)
+	}
+	return conn.WriteMessage(mt, payload)
+}
+
 func NewServer(token, sshKeyPath, nitrousFolderPath, pubKey string, stopCh chan struct{}) *Server {
 	server := &Server{}
 	server.token = token
@@ -153,6 +229,7 @@ func NewServer(token, sshKeyPath, nitrousFolderPath, pubKey string, stopCh chan 
 	server.port = START_PORT
 	server.sshTunnelClients = make(map[string]*tunnel.SSHTunnel)
 	server.syncClients = make(map[string]*filesync.Sync)
+	server.event = event.NewEvent(messageCapacity)
 	return server
 }
 
@@ -163,6 +240,7 @@ func (s *Server) Start() {
 	r.HandleFunc("/containers/{slug}/tunnel/stop", s.stopPortForwarding).Methods("POST")
 	r.HandleFunc("/containers/{slug}/sync/start", s.startSync).Methods("POST")
 	r.HandleFunc("/containers/{slug}/sync/stop", s.stopSync).Methods("POST")
+	r.HandleFunc("/subscribe", s.subscribe).Methods("GET")
 
 	errCh := make(chan error)
 

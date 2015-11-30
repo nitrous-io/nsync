@@ -12,22 +12,28 @@ import (
 	"golang.org/x/crypto/ssh"
 
 	log "github.com/Sirupsen/logrus"
+	"github.com/nitrous-io/nsync/nsync/event"
 )
 
 var errInvalidPorts = errors.New("Invalid ports are given")
 
 type SSHTunnel struct {
-	sshHost   string
-	sshConfig *ssh.ClientConfig
-	ports     []int
+	containerSlug string
+	sshHost       string
+	sshConfig     *ssh.ClientConfig
+	ports         []int
+	event         *event.Event
+
 	listeners []net.Listener
 }
 
-func NewSSHTunnel(sshHost string, sshConfig *ssh.ClientConfig, ports []int) *SSHTunnel {
+func NewSSHTunnel(containerSlug, sshHost string, sshConfig *ssh.ClientConfig, ports []int, event *event.Event) *SSHTunnel {
 	sshTunnel := &SSHTunnel{}
+	sshTunnel.containerSlug = containerSlug
 	sshTunnel.sshHost = sshHost
 	sshTunnel.sshConfig = sshConfig
 	sshTunnel.ports = ports
+	sshTunnel.event = event
 
 	return sshTunnel
 }
@@ -70,12 +76,22 @@ func (st *SSHTunnel) Start() {
 			}
 		}()
 	}
+
+	st.event.Send("container.started-port-forwarding", map[string]string{
+		"slug":  st.containerSlug,
+		"ports": st.portToString(),
+	})
 }
 
 func (st *SSHTunnel) Stop() {
 	for i := 0; i < len(st.listeners); i++ {
 		st.listeners[i].Close()
 	}
+
+	st.event.Send("container.stopped-port-forwarding", map[string]string{
+		"slug":  st.containerSlug,
+		"ports": st.portToString(),
+	})
 }
 
 func pipe(src io.ReadWriteCloser, dst io.ReadWriteCloser) (int64, int64) {
@@ -116,4 +132,14 @@ func parsePort(str string) ([]int, error) {
 	}
 
 	return ports, nil
+}
+
+func (st *SSHTunnel) portToString() string {
+	var portsStr []string
+	for _, port := range st.ports {
+		portStr := strconv.Itoa(port)
+		portsStr = append(portsStr, portStr)
+	}
+
+	return strings.Join(portsStr, ",")
 }

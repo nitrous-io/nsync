@@ -16,6 +16,7 @@ import (
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/kardianos/osext"
+	"github.com/nitrous-io/nsync/nsync/event"
 	"github.com/nitrous-io/nsync/nsync/nitrousapi"
 	"github.com/nitrous-io/nsync/pkg/envmap"
 	"github.com/nitrous-io/nsync/pkg/pathmatch"
@@ -100,6 +101,7 @@ type Sync struct {
 	sshKeyPath        string
 	localPath         string
 	pubKey            string
+	event             *event.Event
 
 	sshUrl   string
 	hostSlug string
@@ -125,7 +127,7 @@ type Sync struct {
 	stopCh  chan struct{}
 }
 
-func NewSync(token, sshKeyPath, nitrousFolderPath, containerSlug, remotePath, pubKey string) *Sync {
+func NewSync(token, sshKeyPath, nitrousFolderPath, containerSlug, remotePath, pubKey string, event *event.Event) *Sync {
 	s := &Sync{
 		token:             token,
 		sshKeyPath:        sshKeyPath,
@@ -133,6 +135,7 @@ func NewSync(token, sshKeyPath, nitrousFolderPath, containerSlug, remotePath, pu
 		containerSlug:     containerSlug,
 		remotePath:        remotePath,
 		pubKey:            pubKey,
+		event:             event,
 		state:             "created",
 	}
 
@@ -165,6 +168,7 @@ func NewSync(token, sshKeyPath, nitrousFolderPath, containerSlug, remotePath, pu
 
 func (s *Sync) Start() {
 	s.state = "started"
+
 	runSync := func() {
 		s.syncingLock.Lock()
 		if s.syncing {
@@ -214,6 +218,10 @@ func (s *Sync) Start() {
 		s.errorCh <- err
 	}
 	defer notify.Stop(notifyChan)
+
+	s.event.Send("container.started-sync", map[string]string{
+		"slug": s.containerSlug,
+	})
 
 	for {
 		select {
@@ -492,6 +500,9 @@ func (s *Sync) parseSyncIgnore() error {
 
 func (s *Sync) Stop() {
 	s.state = "stopped"
+	s.event.Send("container.started-sync", map[string]string{
+		"slug": s.containerSlug,
+	})
 	s.stopCh <- struct{}{}
 	log.Infof("sync is stopped: %s", s.containerSlug)
 }
