@@ -25,6 +25,9 @@ linux:
 deps:
 	go get -d -v ./...
 
+savedeps:
+	GO15VENDOREXPERIMENT=1 godep save ./...
+
 format:
 	go fmt ./...
 
@@ -34,4 +37,4 @@ test:
 		{{end}}' ./... | xargs -n1 go get -d
 	go test ./...
 
-.PHONY: all osx windows linux format test deps
+.PHONY: all osx windows linux format test deps savedeps
