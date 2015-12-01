@@ -62,6 +62,13 @@ type Server struct {
 
 	message chan []byte
 	event   *event.Event
+
+	router *mux.Router
+}
+
+func (s *Server) ping(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(`{"status": "OK"}`))
 }
 
 func (s *Server) startPortForwarding(w http.ResponseWriter, r *http.Request) {
@@ -231,25 +238,29 @@ func NewServer(token, sshKeyPath, nitrousFolderPath, pubKey string, stopCh chan 
 	server.sshTunnelClients = make(map[string]*tunnel.SSHTunnel)
 	server.syncClients = make(map[string]*filesync.Sync)
 	server.event = event.NewEvent(messageCapacity)
+
+	r := mux.NewRouter()
+	r.HandleFunc("/ping", server.ping).Methods("GET")
+	r.HandleFunc("/containers/{slug}/tunnel/start", server.startPortForwarding).Methods("POST")
+	r.HandleFunc("/containers/{slug}/tunnel/stop", server.stopPortForwarding).Methods("POST")
+	r.HandleFunc("/containers/{slug}/sync/start", server.startSync).Methods("POST")
+	r.HandleFunc("/containers/{slug}/sync/stop", server.stopSync).Methods("POST")
+	r.HandleFunc("/subscribe", server.subscribe).Methods("GET")
+	r.HandleFunc("/debug/pprof/{path:.*}", pprof.Index)
+
+	server.router = r
 	return server
 }
 
 func (s *Server) Start() {
 	log.Info("starting server")
-	r := mux.NewRouter()
-	r.HandleFunc("/containers/{slug}/tunnel/start", s.startPortForwarding).Methods("POST")
-	r.HandleFunc("/containers/{slug}/tunnel/stop", s.stopPortForwarding).Methods("POST")
-	r.HandleFunc("/containers/{slug}/sync/start", s.startSync).Methods("POST")
-	r.HandleFunc("/containers/{slug}/sync/stop", s.stopSync).Methods("POST")
-	r.HandleFunc("/subscribe", s.subscribe).Methods("GET")
-	r.HandleFunc("/debug/pprof/{path:.*}", pprof.Index)
+	fmt.Println("start server")
 
 	errCh := make(chan error)
-
 	started := false
 	server := &http.Server{
 		Addr:    fmt.Sprintf("127.0.0.1:%d", s.port),
-		Handler: r,
+		Handler: s.router,
 		ConnState: func(conn net.Conn, state http.ConnState) {
 			if !started && state == http.StateActive {
 				started = true
@@ -257,6 +268,7 @@ func (s *Server) Start() {
 			}
 		},
 	}
+
 	go func() {
 		for s.port <= MAX_PORT {
 			if err := server.ListenAndServe(); err != nil {
