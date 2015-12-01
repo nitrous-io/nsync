@@ -254,7 +254,6 @@ func NewServer(token, sshKeyPath, nitrousFolderPath, pubKey string, stopCh chan 
 
 func (s *Server) Start() {
 	log.Info("starting server")
-	fmt.Println("start server")
 
 	errCh := make(chan error)
 	started := false
