@@ -4,8 +4,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"runtime/pprof"
-	"syscall"
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/nitrous-io/nsync/nsync"
@@ -32,7 +30,7 @@ func main() {
 	ns := nsync.NewNsync(os.Args[1], os.Args[2], stopCh)
 	go ns.StartServer()
 	c := make(chan os.Signal, 1)
-	signal.Notify(c, os.Interrupt, os.Kill, syscall.SIGUSR1)
+	signal.Notify(c, os.Interrupt, os.Kill)
 
 	for {
 		select {
@@ -40,11 +38,6 @@ func main() {
 			log.Debugf("signal received: %s", s)
 
 			switch s {
-			case syscall.SIGUSR1:
-				prof := pprof.Lookup("goroutine")
-				log.Infof("=== BEGIN goroutine stack dump ====")
-				prof.WriteTo(log.StandardLogger().Out, 2)
-				log.Infof("=== END goroutine stack dump ===")
 			case os.Interrupt, os.Kill:
 				if err := deletePidFile(); err != nil {
 					log.Errorf("Failed to delete pidfile: %+v", err)
@@ -63,11 +56,7 @@ func createPidFile() error {
 	pidFilePath := filepath.Join(os.Args[2], ".nsync.pid")
 	log.Infof("PidFile: %s", pidFilePath)
 
-	if pidfileLock, err = pidfile.OpenLockFile(pidFilePath, 0600); err != nil {
-		return err
-	}
-
-	if err = pidfileLock.Lock(); err != nil {
+	if pidfileLock, err = pidfile.NewLockFile(pidFilePath, 0600); err != nil {
 		return err
 	}
 
