@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/http/pprof"
 	"os"
 	"strconv"
 	"strings"
@@ -241,6 +242,7 @@ func (s *Server) Start() {
 	r.HandleFunc("/containers/{slug}/sync/start", s.startSync).Methods("POST")
 	r.HandleFunc("/containers/{slug}/sync/stop", s.stopSync).Methods("POST")
 	r.HandleFunc("/subscribe", s.subscribe).Methods("GET")
+	r.HandleFunc("/debug/pprof/{path:.*}", pprof.Index)
 
 	errCh := make(chan error)
 
