@@ -16,6 +16,7 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/gorilla/websocket"
 	"github.com/nitrous-io/nsync/nsync/event"
+	"github.com/nitrous-io/nsync/nsync/nitrousapi"
 	filesync "github.com/nitrous-io/nsync/nsync/sync"
 	"github.com/nitrous-io/nsync/nsync/tunnel"
 	"github.com/nitrous-io/nsync/pkg/sshconfig"
@@ -75,13 +76,20 @@ func (s *Server) startPortForwarding(w http.ResponseWriter, r *http.Request) {
 	containerSlug := mux.Vars(r)["slug"]
 	log.Debugf("Start port forwarding for container %s", containerSlug)
 
-	sshUrl := r.FormValue("sshUrl")
 	portsInStr := r.FormValue("ports")
 
-	if portsInStr == "" || sshUrl == "" {
+	if portsInStr == "" {
 		w.WriteHeader(http.StatusForbidden)
 		w.Write([]byte(fmt.Sprintf(`{"error": "arguments are not sufficient"}`)))
 		return
+	}
+
+	_, sshUrl, err := nitrousapi.GetContainerInfo(s.token, containerSlug)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(fmt.Sprintf(`{"error": "failed to get container info"}`)))
+		return
+
 	}
 
 	ports, err := parsePorts(portsInStr)
@@ -127,10 +135,8 @@ func (s *Server) startSync(w http.ResponseWriter, r *http.Request) {
 	containerSlug := mux.Vars(r)["slug"]
 	log.Debugf("Start syncing for container %s", containerSlug)
 
-	sshUrl := r.FormValue("sshUrl")
 	remotePath := r.FormValue("remotePath")
-
-	if sshUrl != "" && remotePath == "" {
+	if remotePath == "" {
 		w.WriteHeader(http.StatusForbidden)
 		w.Write([]byte(fmt.Sprintf(`{"error": "arguments are not sufficient"}`)))
 		return
