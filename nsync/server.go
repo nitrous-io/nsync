@@ -279,7 +279,7 @@ func (s *Server) Start() {
 			if err != nil && err.(*net.OpError).Err.(*os.SyscallError).Err == syscall.EADDRINUSE {
 				// port is taken, try another port
 				server.Addr = fmt.Sprintf("127.0.0.1:%d", s.port)
-				log.Infof("port is in use. trying with %d", s.port)
+				log.Infof("Port is in use. trying with %d", s.port)
 				s.port += 1
 				if s.port > MAX_PORT {
 					errCh <- errNoAvailablePorts
@@ -296,7 +296,7 @@ func (s *Server) Start() {
 			break
 		}
 
-		log.Infof("Listening to %d", s.port)
+		log.Infof("Nsync ready at port %d", s.port)
 		if err := httpserver.Serve(server, listener); err != nil {
 			log.Errorf("server is stopped due to: %+v", err)
 			errCh <- err
