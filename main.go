@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"os/signal"
+	"syscall"
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/nitrous-io/nsync/nsync"
@@ -21,23 +22,18 @@ func main() {
 		os.Exit(1)
 	}
 
+	log.Infof("Nsync pid: %d", os.Getpid())
+
 	stopCh := make(chan struct{})
 	ns := nsync.NewNsync(os.Args[1], os.Args[2], stopCh)
 	go ns.StartServer()
 	c := make(chan os.Signal, 1)
-	signal.Notify(c, os.Interrupt, os.Kill)
+	signal.Notify(c, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 
-	for {
-		select {
-		case s := <-c:
-			log.Debugf("signal received: %s", s)
+	s := <-c
+	log.Debugf("Caught signal: %s", s)
 
-			switch s {
-			case os.Interrupt, os.Kill:
-				stopCh <- struct{}{}
-				<-stopCh
-				os.Exit(1)
-			}
-		}
-	}
+	stopCh <- struct{}{}
+	<-stopCh
+	os.Exit(1)
 }
