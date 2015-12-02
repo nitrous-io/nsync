@@ -19,6 +19,7 @@ import (
 	"github.com/nitrous-io/nsync/nsync/nitrousapi"
 	filesync "github.com/nitrous-io/nsync/nsync/sync"
 	"github.com/nitrous-io/nsync/nsync/tunnel"
+	"github.com/nitrous-io/nsync/pkg/httpserver"
 	"github.com/nitrous-io/nsync/pkg/sshconfig"
 )
 
@@ -274,40 +275,31 @@ func (s *Server) Start() {
 		)
 
 		for s.port <= MAX_PORT {
-			addr := server.Addr
-			if addr == "" {
-				addr = ":http"
-			}
-
-			listener, err = net.Listen("tcp", addr)
-			if err != nil {
-				if err.(*net.OpError).Err.(*os.SyscallError).Err == syscall.EADDRINUSE {
-					s.port = s.port + 1
-					server.Addr = fmt.Sprintf("127.0.0.1:%d", s.port)
-					log.Infof("port is in use. trying with %d", s.port)
-					continue
+			listener, err = httpserver.Listen(server)
+			if err != nil && err.(*net.OpError).Err.(*os.SyscallError).Err == syscall.EADDRINUSE {
+				// port is taken, try another port
+				server.Addr = fmt.Sprintf("127.0.0.1:%d", s.port)
+				log.Infof("port is in use. trying with %d", s.port)
+				s.port += 1
+				if s.port > MAX_PORT {
+					errCh <- errNoAvailablePorts
+					return
 				}
-
-				log.Errorf("server is stopped due to: %+v", err)
+				continue
+			} else if err != nil {
+				// there is some other error
+				log.Errorf("failed to listen due to: %+v", err)
 				errCh <- err
-				break
+				return
 			}
-
+			// listen successful
 			break
 		}
 
-		if s.port > MAX_PORT {
-			errCh <- errNoAvailablePorts
-		} else {
-			if err := listener.Close(); err != nil {
-				log.Errorf("server is stopped due to: %+v", err)
-			}
-
-			log.Infof("Listening to %d", s.port)
-			if err := server.ListenAndServe(); err != nil {
-				log.Errorf("server is stopped due to: %+v", err)
-				errCh <- err
-			}
+		log.Infof("Listening to %d", s.port)
+		if err := httpserver.Serve(server, listener); err != nil {
+			log.Errorf("server is stopped due to: %+v", err)
+			errCh <- err
 		}
 	}()
 
