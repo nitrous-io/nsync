@@ -17,15 +17,10 @@ func init() {
 }
 
 func main() {
-	if len(os.Args) < 3 {
-		log.Infof("usage: %s <nitrous-token> <nitrous-folder-path>", os.Args[0])
-		os.Exit(1)
-	}
-
 	log.Infof("Nsync pid: %d", os.Getpid())
 
 	stopCh := make(chan struct{})
-	ns := nsync.NewNsync(os.Args[1], os.Args[2], stopCh)
+	ns := nsync.NewNsync(stopCh)
 	go ns.StartServer()
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)

@@ -52,10 +52,9 @@ var (
 )
 
 type Server struct {
-	token             string
-	sshKeyPath        string
-	pubKey            string
-	nitrousFolderPath string
+	nitrousPath string
+	sshKeyPath  string
+	pubKey      string
 
 	stopCh           chan struct{}
 	port             int
@@ -73,24 +72,60 @@ func (s *Server) ping(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(`{"status": "OK"}`))
 }
 
-func (s *Server) startPortForwarding(w http.ResponseWriter, r *http.Request) {
-	containerSlug := mux.Vars(r)["slug"]
-	log.Debugf("Start port forwarding for container %s", containerSlug)
+func (s *Server) init(w http.ResponseWriter, r *http.Request) {
+	var err error
 
-	portsInStr := r.FormValue("ports")
+	if s.nitrousPath != "" && s.sshKeyPath != "" && s.pubKey != "" {
+		w.WriteHeader(http.StatusForbidden)
+		w.Write([]byte(fmt.Sprintf(`{"error": "already initialized nsync"}`)))
+		return
+	}
 
-	if portsInStr == "" {
+	token := r.FormValue("token")
+	nitrousPath := r.FormValue("nitrousPath")
+
+	if token == "" || nitrousPath == "" {
 		w.WriteHeader(http.StatusForbidden)
 		w.Write([]byte(fmt.Sprintf(`{"error": "arguments are not sufficient"}`)))
 		return
 	}
 
-	_, sshUrl, err := nitrousapi.GetContainerInfo(s.token, containerSlug)
+	s.nitrousPath = nitrousPath
+	s.sshKeyPath, s.pubKey, err = InitSSHInfo(token, nitrousPath)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(fmt.Sprintf(`{"error": "failed to initialize ssh info"}`)))
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(`{"status": "OK"}`))
+}
+
+func (s *Server) startPortForwarding(w http.ResponseWriter, r *http.Request) {
+	if s.nitrousPath == "" || s.sshKeyPath == "" || s.pubKey == "" {
+		w.WriteHeader(http.StatusForbidden)
+		w.Write([]byte(fmt.Sprintf(`{"error": "not initialized yet"}`)))
+		return
+	}
+
+	containerSlug := mux.Vars(r)["slug"]
+	log.Debugf("Start port forwarding for container %s", containerSlug)
+
+	token := r.FormValue("token")
+	portsInStr := r.FormValue("ports")
+
+	if token == "" || portsInStr == "" {
+		w.WriteHeader(http.StatusForbidden)
+		w.Write([]byte(fmt.Sprintf(`{"error": "arguments are not sufficient"}`)))
+		return
+	}
+
+	_, sshUrl, err := nitrousapi.GetContainerInfo(token, containerSlug)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		w.Write([]byte(fmt.Sprintf(`{"error": "failed to get container info"}`)))
 		return
-
 	}
 
 	ports, err := parsePorts(portsInStr)
@@ -133,11 +168,20 @@ func (s *Server) stopPortForwarding(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) startSync(w http.ResponseWriter, r *http.Request) {
+	if s.nitrousPath == "" || s.sshKeyPath == "" || s.pubKey == "" {
+		w.WriteHeader(http.StatusForbidden)
+		w.Write([]byte(fmt.Sprintf(`{"error": "not initialized yet"}`)))
+		return
+	}
+
 	containerSlug := mux.Vars(r)["slug"]
 	log.Debugf("Start syncing for container %s", containerSlug)
 
+	token := r.FormValue("token")
 	remotePath := r.FormValue("remotePath")
-	if remotePath == "" {
+
+	log.Infof("token: %s / remotePath: %s", token, remotePath)
+	if token == "" || remotePath == "" {
 		w.WriteHeader(http.StatusForbidden)
 		w.Write([]byte(fmt.Sprintf(`{"error": "arguments are not sufficient"}`)))
 		return
@@ -151,7 +195,7 @@ func (s *Server) startSync(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// TODO: Need to make mutex lock not to allow more than 1 sync running for the same container
-	syncClient := filesync.NewSync(s.token, s.sshKeyPath, s.nitrousFolderPath, containerSlug, remotePath, s.pubKey, s.event)
+	syncClient := filesync.NewSync(token, s.sshKeyPath, s.nitrousPath, containerSlug, remotePath, s.pubKey, s.event)
 	if err := syncClient.CreateLocalFolderIfAbsent(); err != nil {
 		log.Errorf("Failed to create folder: %s", err)
 		w.WriteHeader(http.StatusInternalServerError)
@@ -234,12 +278,8 @@ func (s *Server) writeToConn(conn *websocket.Conn, mt int, payload []byte) error
 	return conn.WriteMessage(mt, payload)
 }
 
-func NewServer(token, sshKeyPath, nitrousFolderPath, pubKey string, stopCh chan struct{}) *Server {
+func NewServer(stopCh chan struct{}) *Server {
 	server := &Server{}
-	server.token = token
-	server.sshKeyPath = sshKeyPath
-	server.nitrousFolderPath = nitrousFolderPath
-	server.pubKey = pubKey
 	server.stopCh = stopCh
 	server.port = START_PORT
 	server.sshTunnelClients = make(map[string]*tunnel.SSHTunnel)
@@ -248,6 +288,7 @@ func NewServer(token, sshKeyPath, nitrousFolderPath, pubKey string, stopCh chan 
 
 	r := mux.NewRouter()
 	r.HandleFunc("/ping", server.ping).Methods("GET")
+	r.HandleFunc("/init", server.init).Methods("POST")
 	r.HandleFunc("/containers/{slug}/tunnel/start", server.startPortForwarding).Methods("POST")
 	r.HandleFunc("/containers/{slug}/tunnel/stop", server.stopPortForwarding).Methods("POST")
 	r.HandleFunc("/containers/{slug}/sync/start", server.startSync).Methods("POST")

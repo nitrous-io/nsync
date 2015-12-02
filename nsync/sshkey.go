@@ -13,14 +13,30 @@ import (
 
 	"golang.org/x/crypto/ssh"
 
+	"github.com/nitrous-io/nsync/nsync/nitrousapi"
 	"github.com/nitrous-io/nsync/pkg/sshkeygen"
 )
 
 var ErrInvalidPublicKey = errors.New("invalid public key")
 var ErrUnmatchedPublicKey = errors.New("public key does not match private key")
 
-func (ns *Nsync) generateSSHKeyPairIfAbsent() (pubKey string, err error) {
-	pubKeyPath := ns.sshKeyPath + ".pub"
+func InitSSHInfo(token, nitrousPath string) (string, string, error) {
+	username, err := nitrousapi.GetUsername(token)
+	if err != nil {
+		return "", "", err
+	}
+
+	sshKeyPath := filepath.Join(nitrousPath, "SSH Keys", username, "id_rsa")
+	pubKey, err := generateSSHKeyPairIfAbsent(sshKeyPath)
+	if err != nil {
+		return "", "", err
+	}
+
+	return sshKeyPath, pubKey, nil
+}
+
+func generateSSHKeyPairIfAbsent(sshKeyPath string) (pubKey string, err error) {
+	pubKeyPath := sshKeyPath + ".pub"
 
 	u, err := user.Current()
 	if err != nil {
@@ -34,17 +50,17 @@ func (ns *Nsync) generateSSHKeyPairIfAbsent() (pubKey string, err error) {
 
 	name := fmt.Sprintf("%s@%s.desktop.nitrous.io", u.Username, hostname)
 
-	if err := os.MkdirAll(filepath.Dir(ns.sshKeyPath), 0700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(sshKeyPath), 0700); err != nil {
 		return "", err
 	}
 
-	if _, err := os.Stat(ns.sshKeyPath); os.IsNotExist(err) {
+	if _, err := os.Stat(sshKeyPath); os.IsNotExist(err) {
 		privKey, pubKey, err := sshkeygen.Generate(2048, name)
 		if err != nil {
 			return "", err
 		}
 
-		if err := ioutil.WriteFile(ns.sshKeyPath, []byte(privKey), 0600); err != nil {
+		if err := ioutil.WriteFile(sshKeyPath, []byte(privKey), 0600); err != nil {
 			return "", err
 		}
 
@@ -56,7 +72,7 @@ func (ns *Nsync) generateSSHKeyPairIfAbsent() (pubKey string, err error) {
 	}
 
 	if _, err := os.Stat(pubKeyPath); os.IsNotExist(err) {
-		privKey, err := ioutil.ReadFile(ns.sshKeyPath)
+		privKey, err := ioutil.ReadFile(sshKeyPath)
 		if err != nil {
 			return "", err
 		}
@@ -80,15 +96,15 @@ func (ns *Nsync) generateSSHKeyPairIfAbsent() (pubKey string, err error) {
 	}
 
 	pubKey = string(publicKey)
-	if ok, err := ns.verifyPublicKey(name, pubKey); !ok || err != nil {
+	if ok, err := verifyPublicKey(name, pubKey, sshKeyPath); !ok || err != nil {
 		return "", ErrInvalidPublicKey
 	}
 
 	return pubKey, nil
 }
 
-func (ns *Nsync) verifyPublicKey(name, pubKey string) (bool, error) {
-	privKey, err := ioutil.ReadFile(ns.sshKeyPath)
+func verifyPublicKey(name, pubKey, sshKeyPath string) (bool, error) {
+	privKey, err := ioutil.ReadFile(sshKeyPath)
 	if err != nil {
 		return false, err
 	}
