@@ -1,6 +1,8 @@
 package sync
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"time"
 
@@ -13,7 +15,14 @@ const (
 )
 
 func (s *Sync) startRemoteWatcher(outputChan chan<- string, errorChan chan<- error, stopChan chan struct{}) {
-	watcherCommand := fmt.Sprintf("/nitrous/nitrous-watcher %s %s", s.remotePath, s.token)
+	md, err := s.convertToken()
+	if err != nil {
+		errorChan <- err
+		return
+	}
+
+	logrus.Infof("sha256: %s", md)
+	watcherCommand := fmt.Sprintf("/nitrous/nitrous-watcher %s %s", s.remotePath, md)
 
 	// This is to kill remained process.
 	// It can happen when the network connection is dropped or nsync is terminated abnormally
@@ -27,4 +36,14 @@ func (s *Sync) startRemoteWatcher(outputChan chan<- string, errorChan chan<- err
 		errorChan <- err
 	}
 	return
+}
+
+func (s *Sync) convertToken() (string, error) {
+	hash := sha256.New()
+	if _, err := hash.Write([]byte(s.token)); err != nil {
+		return "", err
+	}
+
+	md := hash.Sum(nil)
+	return hex.EncodeToString(md), nil
 }
