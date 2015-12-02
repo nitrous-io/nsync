@@ -36,7 +36,7 @@ func main() {
 			case os.Interrupt, os.Kill:
 				stopCh <- struct{}{}
 				<-stopCh
-				os.Exit(0)
+				os.Exit(1)
 			}
 		}
 	}
