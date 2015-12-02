@@ -259,24 +259,28 @@ func NewServer(token, sshKeyPath, nitrousFolderPath, pubKey string, stopCh chan 
 }
 
 func (s *Server) Start() {
-	log.Info("starting server")
+	log.Debug("starting server")
 
 	errCh := make(chan error)
-	started := false
 	server := &http.Server{
 		Addr:    fmt.Sprintf("127.0.0.1:%d", s.port),
 		Handler: s.router,
-		ConnState: func(conn net.Conn, state http.ConnState) {
-			if !started && state == http.StateActive {
-				started = true
-				log.Infof("listenting to %d", s.port)
-			}
-		},
 	}
 
 	go func() {
+		var (
+			listener net.Listener
+			err      error
+		)
+
 		for s.port <= MAX_PORT {
-			if err := server.ListenAndServe(); err != nil {
+			addr := server.Addr
+			if addr == "" {
+				addr = ":http"
+			}
+
+			listener, err = net.Listen("tcp", addr)
+			if err != nil {
 				if err.(*net.OpError).Err.(*os.SyscallError).Err == syscall.EADDRINUSE {
 					s.port = s.port + 1
 					server.Addr = fmt.Sprintf("127.0.0.1:%d", s.port)
@@ -288,10 +292,22 @@ func (s *Server) Start() {
 				errCh <- err
 				break
 			}
+
+			break
 		}
 
 		if s.port > MAX_PORT {
 			errCh <- errNoAvailablePorts
+		} else {
+			if err := listener.Close(); err != nil {
+				log.Errorf("server is stopped due to: %+v", err)
+			}
+
+			log.Infof("Listening to %d", s.port)
+			if err := server.ListenAndServe(); err != nil {
+				log.Errorf("server is stopped due to: %+v", err)
+				errCh <- err
+			}
 		}
 	}()
 
