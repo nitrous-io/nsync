@@ -47,6 +47,7 @@ var (
 
 	errNoAvailablePorts     = errors.New("Could't find free port")
 	errInvalidPortsArgument = errors.New("Given ports parameter is invalid")
+	errInvalidRequest       = errors.New("token is invalid")
 
 	messageCapacity = 256
 )
@@ -72,21 +73,42 @@ func (s *Server) ping(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(`{"status": "OK"}`))
 }
 
+func (s *Server) getBearerToken(r *http.Request) (string, error) {
+	authHeader := r.Header.Get("Authorization")
+	if authHeader != "" {
+		prefix := "Bearer "
+		if len(authHeader) <= len(prefix) ||
+			(!strings.HasPrefix(authHeader, prefix) &&
+				!strings.HasPrefix(authHeader, strings.ToLower(prefix))) {
+			return "", errInvalidRequest
+		}
+
+		return authHeader[len(prefix):], nil
+	}
+
+	return "", errInvalidRequest
+}
+
 func (s *Server) init(w http.ResponseWriter, r *http.Request) {
 	var err error
 
 	if s.nitrousPath != "" && s.sshKeyPath != "" && s.pubKey != "" {
 		w.WriteHeader(http.StatusForbidden)
-		w.Write([]byte(fmt.Sprintf(`{"error": "already initialized nsync"}`)))
+		w.Write([]byte(`{"error": "already initialized nsync"}`))
 		return
 	}
 
-	token := r.FormValue("token")
-	nitrousPath := r.FormValue("nitrousPath")
+	token, err := s.getBearerToken(r)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(fmt.Sprintf(`{"error": "%s"}`, errInvalidRequest)))
+		return
+	}
 
-	if token == "" || nitrousPath == "" {
+	nitrousPath := r.FormValue("nitrousPath")
+	if nitrousPath == "" {
 		w.WriteHeader(http.StatusForbidden)
-		w.Write([]byte(fmt.Sprintf(`{"error": "arguments are not sufficient"}`)))
+		w.Write([]byte(`{"error": "arguments are not sufficient"}`))
 		return
 	}
 
@@ -94,7 +116,7 @@ func (s *Server) init(w http.ResponseWriter, r *http.Request) {
 	s.sshKeyPath, s.pubKey, err = InitSSHInfo(token, nitrousPath)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte(fmt.Sprintf(`{"error": "failed to initialize ssh info"}`)))
+		w.Write([]byte(`{"error": "failed to initialize ssh info"}`))
 		return
 	}
 
@@ -105,33 +127,38 @@ func (s *Server) init(w http.ResponseWriter, r *http.Request) {
 func (s *Server) startPortForwarding(w http.ResponseWriter, r *http.Request) {
 	if s.nitrousPath == "" || s.sshKeyPath == "" || s.pubKey == "" {
 		w.WriteHeader(http.StatusForbidden)
-		w.Write([]byte(fmt.Sprintf(`{"error": "not initialized yet"}`)))
+		w.Write([]byte(`{"error": "not initialized yet"}`))
+		return
+	}
+
+	token, err := s.getBearerToken(r)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(fmt.Sprintf(`{"error": "%s"}`, errInvalidRequest)))
 		return
 	}
 
 	containerSlug := mux.Vars(r)["slug"]
 	log.Debugf("Start port forwarding for container %s", containerSlug)
 
-	token := r.FormValue("token")
 	portsInStr := r.FormValue("ports")
-
-	if token == "" || portsInStr == "" {
+	if portsInStr == "" {
 		w.WriteHeader(http.StatusForbidden)
-		w.Write([]byte(fmt.Sprintf(`{"error": "arguments are not sufficient"}`)))
+		w.Write([]byte(`{"error": "arguments are not sufficient"}`))
 		return
 	}
 
 	_, sshUrl, err := nitrousapi.GetContainerInfo(token, containerSlug)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte(fmt.Sprintf(`{"error": "failed to get container info"}`)))
+		w.Write([]byte(`{"error": "failed to get container info"}`))
 		return
 	}
 
 	ports, err := parsePorts(portsInStr)
 	if err != nil {
 		w.WriteHeader(http.StatusForbidden)
-		w.Write([]byte(fmt.Sprintf(`{"error": "invalid ports"}`)))
+		w.Write([]byte(`{"error": "invalid ports"}`))
 		return
 	}
 
@@ -143,7 +170,7 @@ func (s *Server) startPortForwarding(w http.ResponseWriter, r *http.Request) {
 	host, config, err := sshconfig.Config(sshUrl, s.sshKeyPath)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte(fmt.Sprintf(`{"error": "failed to get ssh config"}`)))
+		w.Write([]byte(`{"error": "failed to get ssh config"}`))
 		return
 	}
 
@@ -170,20 +197,24 @@ func (s *Server) stopPortForwarding(w http.ResponseWriter, r *http.Request) {
 func (s *Server) startSync(w http.ResponseWriter, r *http.Request) {
 	if s.nitrousPath == "" || s.sshKeyPath == "" || s.pubKey == "" {
 		w.WriteHeader(http.StatusForbidden)
-		w.Write([]byte(fmt.Sprintf(`{"error": "not initialized yet"}`)))
+		w.Write([]byte(`{"error": "not initialized yet"}`))
+		return
+	}
+
+	token, err := s.getBearerToken(r)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(fmt.Sprintf(`{"error": "%s"}`, errInvalidRequest)))
 		return
 	}
 
 	containerSlug := mux.Vars(r)["slug"]
 	log.Debugf("Start syncing for container %s", containerSlug)
 
-	token := r.FormValue("token")
 	remotePath := r.FormValue("remotePath")
-
-	log.Infof("token: %s / remotePath: %s", token, remotePath)
-	if token == "" || remotePath == "" {
+	if remotePath == "" {
 		w.WriteHeader(http.StatusForbidden)
-		w.Write([]byte(fmt.Sprintf(`{"error": "arguments are not sufficient"}`)))
+		w.Write([]byte(`{"error": "arguments are not sufficient"}`))
 		return
 	}
 
@@ -199,14 +230,14 @@ func (s *Server) startSync(w http.ResponseWriter, r *http.Request) {
 	if err := syncClient.CreateLocalFolderIfAbsent(); err != nil {
 		log.Errorf("Failed to create folder: %s", err)
 		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte(fmt.Sprintf(`{"error": "failed to create a folder for sync"}`)))
+		w.Write([]byte(`{"error": "failed to create a folder for sync"}`))
 		return
 	}
 
 	if err := syncClient.UploadSyncIgnore(); err != nil {
 		log.Errorf("Failed to upload .syncignore: %s", err)
 		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte(fmt.Sprintf(`{"error": "failed to sync .sycnignore with remote"}`)))
+		w.Write([]byte(`{"error": "failed to sync .sycnignore with remote"}`))
 		return
 	}
 
