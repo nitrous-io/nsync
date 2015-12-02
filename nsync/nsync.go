@@ -40,5 +40,5 @@ func NewNsync(token, nitrousFolderPath string, stopCh chan struct{}) *Nsync {
 }
 
 func (ns *Nsync) StartServer() {
-	go NewServer(ns.token, ns.sshKeyPath, ns.nitrousFolderPath, ns.pubKey, ns.stopCh).Start()
+	NewServer(ns.token, ns.sshKeyPath, ns.nitrousFolderPath, ns.pubKey, ns.stopCh).Start()
 }
