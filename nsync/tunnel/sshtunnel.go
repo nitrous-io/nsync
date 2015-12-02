@@ -49,7 +49,7 @@ func (st *SSHTunnel) Start() {
 
 	for i := 0; i < len(st.ports); i++ {
 		port := st.ports[i]
-		addr := fmt.Sprintf("localhost:%d", port)
+		addr := fmt.Sprintf("127.0.0.1:%d", port)
 		listener, err := net.Listen("tcp", addr)
 		if err != nil {
 			log.Errorf("Failed to listen to %d: %v", port, err)
