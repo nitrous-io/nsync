@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"strings"
+	"sync"
 
 	"golang.org/x/crypto/ssh"
 
@@ -52,11 +53,28 @@ func main() {
 		panic(err)
 	}
 
-	if err := copyPipes(session); err != nil {
+	defer session.Close()
+
+	done := make(chan struct{}, 1)
+	if err := copyPipes(session, done); err != nil {
 		panic(err)
 	}
 
-	session.Run(cmd)
+	errCh := make(chan error)
+	go func() {
+		if err := session.Run(cmd); err != nil {
+			errCh <- err
+			return
+		}
+		done <- struct{}{}
+	}()
+
+	select {
+	case err := <-errCh:
+		panic(err)
+	case <-done:
+		os.Exit(0)
+	}
 }
 
 func createSession(sshUrl, sshKeyPath string) (*ssh.Session, error) {
@@ -77,24 +95,42 @@ func createSession(sshUrl, sshKeyPath string) (*ssh.Session, error) {
 	return session, nil
 }
 
-func copyPipes(session *ssh.Session) error {
+func copyPipes(session *ssh.Session, done chan struct{}) error {
+	var o sync.Once
+	var c = make(chan bool)
+
+	terminate := func() {
+		close(c)
+		done <- struct{}{}
+	}
+
 	stdin, err := session.StdinPipe()
 	if err != nil {
 		return err
 	}
-	go io.Copy(stdin, os.Stdin)
-
 	stdout, err := session.StdoutPipe()
 	if err != nil {
 		return err
 	}
-	go io.Copy(os.Stdout, stdout)
-
 	stderr, err := session.StderrPipe()
 	if err != nil {
 		return err
 	}
-	go io.Copy(os.Stderr, stderr)
+
+	go func() {
+		io.Copy(stdin, os.Stdin)
+		o.Do(terminate)
+	}()
+
+	go func() {
+		io.Copy(os.Stdout, stdout)
+		o.Do(terminate)
+	}()
+
+	go func() {
+		io.Copy(os.Stderr, stderr)
+		o.Do(terminate)
+	}()
 
 	return nil
 }
