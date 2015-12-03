@@ -26,7 +26,7 @@ linux:
 	GOARCH=amd64 GOOS=linux go build -v -o dist/lin64/nsync
 
 deps:
-	go get -d -v ./...
+	GO15VENDOREXPERIMENT=1 go get -d -v ./...
 
 savedeps:
 	GO15VENDOREXPERIMENT=1 godep save ./...
@@ -38,6 +38,6 @@ test:
 	@echo "$(OK_COLOR)--> Testing...$(NO_COLOR)"
 	@go list -f '{{range .TestImports}}{{.}}\
 		{{end}}' ./... | xargs -n1 go get -d
-	go test ./...
+	env GO15VENDOREXPERIMENT=1 go test ./...
 
 .PHONY: all osx windows linux format test deps savedeps
