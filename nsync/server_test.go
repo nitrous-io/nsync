@@ -1,6 +1,8 @@
 package nsync_test
 
 import (
+	"fmt"
+	"io/ioutil"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -26,9 +28,19 @@ var _ = Describe("nsync/server", func() {
 		svr     *nsync.Server
 	)
 
+	newRequest := func(method string, urlStr string, params *url.Values) (*http.Request, error) {
+		u, err := url.Parse(urlStr)
+		if err != nil {
+			return nil, err
+		}
+		if params != nil {
+			u.RawQuery = params.Encode()
+		}
+		return http.NewRequest(method, u.String(), nil)
+	}
+
 	BeforeEach(func() {
-		// func NewServer(token, sshKeyPath, nitrousFolderPath, pubKey string, stopCh chan struct{})
-		svr = nsync.NewServer("token", "", "", "", nil)
+		svr = nsync.NewServer(nil)
 		handler = svr.Router()
 		res = httptest.NewRecorder()
 	})
@@ -36,41 +48,107 @@ var _ = Describe("nsync/server", func() {
 	Describe("GET /ping", func() {
 		It("responds with 200", func() {
 			req, err = http.NewRequest("GET", "/ping", nil)
+
 			Expect(err).To(BeNil())
 
 			handler.ServeHTTP(res, req)
 			Expect(res.Code).To(Equal(http.StatusOK))
+		})
+	})
+
+	Describe("POST /init", func() {
+		It("responds with 403 if arguments are not fulfilled", func() {
+			req, err = http.NewRequest("POST", "/init", nil)
+			Expect(err).To(BeNil())
+			req.Header.Set("Authorization", fmt.Sprintf("Bearer token"))
+
+			handler.ServeHTTP(res, req)
+			Expect(res.Code).To(Equal(http.StatusForbidden))
+
+			message, err := ioutil.ReadAll(res.Body)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(message)).To(Equal(`{"error": "arguments are not sufficient"}`))
+		})
+
+		It("responds with 403 if it is already initialized", func() {
+			svr.SetSSHInfo("nitrous-path", "ssh-key-path", "key")
+
+			data := &url.Values{}
+			data.Set("token", "token")
+			data.Set("nitrousPath", "nitrousPath")
+
+			req, err := newRequest("POST", "/init", data)
+			Expect(err).To(BeNil())
+			req.Header.Set("Authorization", fmt.Sprintf("Bearer token"))
+
+			handler.ServeHTTP(res, req)
+			Expect(res.Code).To(Equal(http.StatusForbidden))
+
+			message, err := ioutil.ReadAll(res.Body)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(message)).To(Equal(`{"error": "already initialized nsync"}`))
 		})
 	})
 
 	Describe("POST /containers/{slug}/tunnel/start", func() {
-		It("responds with 403 if arguments are not fulfilled", func() {
-			req, err = http.NewRequest("POST", "/containers/test-container/tunnel/start", nil)
+		It("responds with 400 if a token is not provided", func() {
+			svr.SetSSHInfo("nitrous-path", "ssh-key-path", "key")
+
+			req, err = newRequest("POST", "/containers/test-container/tunnel/start", nil)
 			Expect(err).To(BeNil())
 
 			handler.ServeHTTP(res, req)
+			Expect(res.Code).To(Equal(http.StatusBadRequest))
+
+			message, err := ioutil.ReadAll(res.Body)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(message)).To(Equal(`{"error": "token is invalid"}`))
+		})
+
+		It("responds with 403 if it is not initialized", func() {
+			req, err = newRequest("POST", "/containers/test-container/tunnel/start", nil)
+			Expect(err).To(BeNil())
+			req.Header.Set("Authorization", fmt.Sprintf("Bearer token"))
+
+			handler.ServeHTTP(res, req)
 			Expect(res.Code).To(Equal(http.StatusForbidden))
+
+			message, err := ioutil.ReadAll(res.Body)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(message)).To(Equal(`{"error": "not initialized yet"}`))
+		})
+
+		It("responds with 403 if arguments are not fulfilled", func() {
+			svr.SetSSHInfo("nitrous-path", "ssh-key-path", "key")
+
+			req, err = newRequest("POST", "/containers/test-container/tunnel/start", nil)
+			Expect(err).To(BeNil())
+			req.Header.Set("Authorization", fmt.Sprintf("Bearer token"))
+
+			handler.ServeHTTP(res, req)
+			Expect(res.Code).To(Equal(http.StatusForbidden))
+
+			message, err := ioutil.ReadAll(res.Body)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(message)).To(Equal(`{"error": "arguments are not sufficient"}`))
 		})
 
 		It("responds with 403 if ports are not valid", func() {
-			data := url.Values{}
-			data.Set("sshUrl", "ssh://nitrous@pete-4644.nitrouspro.com:32866")
+			svr.SetSSHInfo("nitrous-path", "ssh-key-path", "key")
+
+			data := &url.Values{}
 			data.Set("ports", ",,")
-			req, err = http.NewRequest("POST", "/containers/test-container/tunnel/start", nil)
+
+			req, err = newRequest("POST", "/containers/test-container/tunnel/start", data)
 			Expect(err).To(BeNil())
+			req.Header.Set("Authorization", fmt.Sprintf("Bearer token"))
 
 			handler.ServeHTTP(res, req)
 			Expect(res.Code).To(Equal(http.StatusForbidden))
-		})
-	})
 
-	Describe("GET /subscribe", func() {
-		It("responds with 200", func() {
-			req, err = http.NewRequest("GET", "/subscribe", nil)
-			Expect(err).To(BeNil())
-
-			handler.ServeHTTP(res, req)
-			Expect(res.Code).To(Equal(http.StatusOK))
+			message, err := ioutil.ReadAll(res.Body)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(message)).To(Equal(`{"error": "invalid ports"}`))
 		})
 	})
 })
