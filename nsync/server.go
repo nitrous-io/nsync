@@ -148,17 +148,17 @@ func (s *Server) startPortForwarding(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, sshUrl, err := nitrousapi.GetContainerInfo(token, containerSlug)
-	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte(`{"error": "failed to get container info"}`))
-		return
-	}
-
 	ports, err := parsePorts(portsInStr)
 	if err != nil {
 		w.WriteHeader(http.StatusForbidden)
 		w.Write([]byte(`{"error": "invalid ports"}`))
+		return
+	}
+
+	_, sshUrl, err := nitrousapi.GetContainerInfo(token, containerSlug)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`{"error": "failed to get container info"}`))
 		return
 	}
 
@@ -395,6 +395,10 @@ func parsePorts(str string) ([]int, error) {
 		}
 
 		ports = append(ports, port)
+	}
+
+	if len(ports) == 0 {
+		return nil, errInvalidPortsArgument
 	}
 
 	return ports, nil
