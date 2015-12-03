@@ -48,14 +48,14 @@ const maxRemoteWatcherRetry = 5
 
 func init() {
 	createSymlinkIfNotExist := func() {
-		sshExeRealPath := filepath.Join(exeFolderPath, "nitrous-ssh")
-		sshExeSymlinkPath := filepath.Join(tempFolderPath, "nitrous-ssh")
+		sshExeRealPath := filepath.Join(exeFolderPath, "nsync-ssh")
+		sshExeSymlinkPath := filepath.Join(tempFolderPath, "nsync-ssh")
 		if _, err := os.Stat(sshExeSymlinkPath); os.IsNotExist(err) {
 			if err := os.Symlink(sshExeRealPath, sshExeSymlinkPath); err != nil {
 				log.Panicf("Failed to create symlink of nitrous-ssh: %+v", err)
 			}
 		} else if err != nil {
-			log.Panicf("Failed to get symlink of nitrous-ssh: %+v", err)
+			log.Panicf("Failed to get stats of nitrous-ssh symlink: %+v", err)
 		}
 
 		sshExePath = sshExeSymlinkPath
@@ -74,7 +74,7 @@ func init() {
 		if err != nil {
 			log.Panicf("Failed to genereate unison exec path: %+v", err)
 		}
-		sshExePath, err = shortname.Get(filepath.Join(exeFolderPath, "nitrous-ssh.exe"))
+		sshExePath, err = shortname.Get(filepath.Join(exeFolderPath, "nsync-ssh.exe"))
 		if err != nil {
 			log.Panicf("Failed to genereate ssh exec path: %+v", err)
 		}
@@ -352,13 +352,6 @@ func (s *Sync) performSync() {
 func (s *Sync) unisonCmd() (*exec.Cmd, error) {
 	sshRemotePath := fmt.Sprintf("%s/%s", s.sshUrl, s.remotePath)
 
-	var devNull string
-	if isWindows {
-		devNull = "NUL"
-	} else {
-		devNull = "/dev/null"
-	}
-
 	var sshKeyPathEscaped string
 	if isWindows {
 		var err error
@@ -371,10 +364,7 @@ func (s *Sync) unisonCmd() (*exec.Cmd, error) {
 	}
 
 	sshArgs := []string{
-		fmt.Sprintf("-o UserKnownHostsFile=%s", devNull),
-		"-o StrictHostKeyChecking=no",
-		"-o PreferredAuthentications=publickey",
-		fmt.Sprintf("-i %s", sshKeyPathEscaped),
+		sshKeyPathEscaped,
 	}
 
 	args := []string{
