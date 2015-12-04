@@ -15,39 +15,49 @@ import (
 	"github.com/nitrous-io/nsync/pkg/sshconfig"
 )
 
-const usage = `usage: nitrous-ssh -l <username> -p <port> <ssh-host> -e <escape-characters> <ssh-key-path> <unison-command>`
+const usage = `usage: nitrous-ssh -l <username> -p <port> <ssh-host> -i <ssh-key-path> <remote-command>`
 
 func main() {
 	var (
-		username      string
-		port          int
-		host          string
-		escapeOptions string
-		cmd           string
-		sshKeyPath    string
+		username    string
+		port        int
+		host        string
+		escapeChars string
+		sshKeyPath  string
+		remoteCmd   string
 	)
 
+	showUsage := func() {
+		log.Fatal(usage)
+	}
+
+	flag.CommandLine.Usage = showUsage
 	flag.StringVar(&username, "l", "", "ssh username")
 	flag.IntVar(&port, "p", 0, "ssh port")
 	flag.Parse()
 
 	if username == "" || port == 0 {
-		log.Fatal(usage)
+		showUsage()
 	}
 
 	host = flag.Args()[0]
 	subOptions := flag.NewFlagSet(host, flag.ExitOnError)
-	subOptions.StringVar(&escapeOptions, "e", "", "escape characters")
+	subOptions.Usage = showUsage
+	subOptions.StringVar(&escapeChars, "e", "", "")
+	subOptions.StringVar(&sshKeyPath, "i", "", "ssh key path")
 	subOptions.Parse(flag.Args()[1:])
 
-	optionsLen := len(subOptions.Args())
-	if optionsLen < 3 {
-		log.Fatal(usage)
+	if sshKeyPath == "" {
+		showUsage()
 	}
 
-	sshKeyPath = strings.Join(subOptions.Args()[0:optionsLen-2], " ")
-	cmd = strings.Join(subOptions.Args()[optionsLen-2:], " ") // /nitrous/nitrous-unison -server
+	// unescape "/////" (*nix) "\\\\\" (windows) back to space
+	sshKeyPath = strings.Replace(sshKeyPath, strings.Repeat(string(os.PathSeparator), 5), " ", -1)
+
+	remoteCmd = strings.Join(subOptions.Args()[0:], " ")
+
 	sshUrl := fmt.Sprintf("ssh://%s@%s:%d", username, host, port)
+	fmt.Println(sshKeyPath, sshUrl, remoteCmd)
 
 	session, err := createSession(sshUrl, sshKeyPath)
 	if err != nil {
@@ -63,7 +73,7 @@ func main() {
 
 	errCh := make(chan error)
 	go func() {
-		if err := session.Run(cmd); err != nil {
+		if err := session.Run(remoteCmd); err != nil {
 			errCh <- err
 			return
 		}

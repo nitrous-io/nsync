@@ -135,8 +135,8 @@ func NewSync(nitrousAPI *nitrousapi.NitrousAPI, token, sshKeyPath, nitrousFolder
 	s := &Sync{
 		nitrousAPI:        nitrousAPI,
 		token:             token,
-		sshKeyPath:        sshKeyPath,
-		nitrousFolderPath: nitrousFolderPath,
+		sshKeyPath:        filepath.Clean(sshKeyPath),
+		nitrousFolderPath: filepath.Clean(nitrousFolderPath),
 		containerSlug:     containerSlug,
 		remotePath:        remotePath,
 		pubKey:            pubKey,
@@ -355,18 +355,13 @@ func (s *Sync) performSync() {
 func (s *Sync) unisonCmd() (*exec.Cmd, error) {
 	sshRemotePath := fmt.Sprintf("%s/%s", s.sshUrl, s.remotePath)
 
-	var sshKeyPathEscaped string
-	if isWindows {
-		var err error
-		sshKeyPathEscaped, err = shortname.Get(s.sshKeyPath)
-		if err != nil {
-			return nil, err
-		}
-	} else {
-		sshKeyPathEscaped = strings.Replace(strings.Replace(s.sshKeyPath, `\`, `\\`, -1), " ", `\ `, -1)
-	}
+	// nitrous-ssh treats "/////" (*nix) "\\\\\" (windows) as space
+	// since sshKeyPath is already filepath.Clean-ed, deliberate use of
+	// repeated path separators should already be gone.
+	sshKeyPathEscaped := strings.Replace(s.sshKeyPath, " ", strings.Repeat(string(os.PathSeparator), 5), -1)
 
 	sshArgs := []string{
+		"-i",
 		sshKeyPathEscaped,
 	}
 
