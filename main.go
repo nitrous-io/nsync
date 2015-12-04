@@ -1,6 +1,7 @@
 package main
 
 import (
+	"io/ioutil"
 	"os"
 	"os/signal"
 	"syscall"
@@ -20,13 +21,31 @@ func main() {
 	server := nsync.NewServer(stopCh)
 	go server.Start()
 
-	c := make(chan os.Signal, 1)
-	signal.Notify(c, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+	interruptChan := make(chan struct{})
 
-	s := <-c
-	log.Debugf("Caught signal: %s", s)
+	go catchSignal(interruptChan)
+	go catchStdinClosure(interruptChan)
 
-	stopCh <- struct{}{}
+	stopCh <- (<-interruptChan)
 	<-stopCh
 	os.Exit(1)
+}
+
+func catchSignal(c chan<- struct{}) {
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+
+	s := <-sigChan
+
+	log.Debugf("Caught signal: %s", s)
+	c <- struct{}{}
+}
+
+func catchStdinClosure(c chan<- struct{}) {
+	_, err := ioutil.ReadAll(os.Stdin)
+	if err != nil {
+		log.Fatal(err)
+	}
+	// no error means EOF read
+	c <- struct{}{}
 }
