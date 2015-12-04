@@ -95,6 +95,8 @@ func mustString(s string, err error) string {
 }
 
 type Sync struct {
+	nitrousAPI *nitrousapi.NitrousAPI
+
 	token             string
 	nitrousFolderPath string
 	containerSlug     string
@@ -129,8 +131,9 @@ type Sync struct {
 	stopCh  chan struct{}
 }
 
-func NewSync(token, sshKeyPath, nitrousFolderPath, containerSlug, remotePath, pubKey string, event *event.Event) *Sync {
+func NewSync(nitrousAPI *nitrousapi.NitrousAPI, token, sshKeyPath, nitrousFolderPath, containerSlug, remotePath, pubKey string, event *event.Event) *Sync {
 	s := &Sync{
+		nitrousAPI:        nitrousAPI,
 		token:             token,
 		sshKeyPath:        sshKeyPath,
 		nitrousFolderPath: nitrousFolderPath,
@@ -141,11 +144,11 @@ func NewSync(token, sshKeyPath, nitrousFolderPath, containerSlug, remotePath, pu
 		state:             "created",
 	}
 
-	if err := nitrousapi.UploadPublicKey(s.token, s.containerSlug, s.pubKey); err != nil {
+	if err := nitrousAPI.UploadPublicKey(s.containerSlug, s.pubKey); err != nil {
 		log.Panicf("sync: Failed upload ssh key: %+v ", err)
 	}
 
-	hostId, sshUrl, err := nitrousapi.GetContainerInfo(s.token, s.containerSlug)
+	hostId, sshUrl, err := nitrousAPI.GetContainerInfo(s.containerSlug)
 	if err != nil {
 		log.Panicf("Failed to get container info: %+v", err)
 	}
@@ -153,7 +156,7 @@ func NewSync(token, sshKeyPath, nitrousFolderPath, containerSlug, remotePath, pu
 	log.Debug("SSH URL obtained: ", sshUrl)
 	s.sshUrl = sshUrl
 
-	hostSlug, _, err := nitrousapi.GetHostInfo(token, hostId)
+	hostSlug, _, err := nitrousAPI.GetHostInfo(hostId)
 	if err != nil {
 		log.Panicf("Failed to get host info: %+v", err)
 	}
@@ -320,7 +323,7 @@ func (s *Sync) performSync() {
 		log.Errorf("sync: Error occurred: %v", s.lastError)
 
 		if s.lastError == ErrSSHAccessDenied {
-			if err := nitrousapi.UploadPublicKey(s.token, s.containerSlug, s.pubKey); err != nil {
+			if err := s.nitrousAPI.UploadPublicKey(s.containerSlug, s.pubKey); err != nil {
 				log.Panicf("sync: Failed upload ssh key: %+v ", err)
 			}
 		}

@@ -20,8 +20,8 @@ import (
 var ErrInvalidPublicKey = errors.New("invalid public key")
 var ErrUnmatchedPublicKey = errors.New("public key does not match private key")
 
-func InitSSHInfo(token, nitrousPath string) (string, string, error) {
-	username, err := nitrousapi.GetUsername(token)
+func InitSSHInfo(nitrousAPI *nitrousapi.NitrousAPI, nitrousPath string) (string, string, error) {
+	username, err := nitrousAPI.GetUsername()
 	if err != nil {
 		return "", "", err
 	}

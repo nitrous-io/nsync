@@ -7,20 +7,20 @@ import (
 	"io/ioutil"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 )
 
-var nitrousHost = os.Getenv("NITROUS_HOST")
-
-func init() {
-	if nitrousHost == "" {
-		nitrousHost = "https://www.nitrous.io"
-	}
+type NitrousAPI struct {
+	token string
+	host  string
 }
 
-func GetUsername(token string) (username string, err error) {
-	res, err := authedGet(token, "/api/v0/user")
+func NewNitrousAPI(token, host string) *NitrousAPI {
+	return &NitrousAPI{token: token, host: host}
+}
+
+func (na *NitrousAPI) GetUsername() (username string, err error) {
+	res, err := na.authedGet("/api/v0/user")
 	if err != nil {
 		return "", err
 	}
@@ -37,8 +37,8 @@ func GetUsername(token string) (username string, err error) {
 	return "", errors.New("username was not found")
 }
 
-func GetContainerInfo(token, containerSlug string) (hostId int64, sshUrl string, err error) {
-	res, err := authedGet(token, "/api/v0/containers/"+containerSlug)
+func (na *NitrousAPI) GetContainerInfo(containerSlug string) (hostId int64, sshUrl string, err error) {
+	res, err := na.authedGet("/api/v0/containers/" + containerSlug)
 	if err != nil {
 		return 0, "", err
 	}
@@ -62,8 +62,8 @@ func GetContainerInfo(token, containerSlug string) (hostId int64, sshUrl string,
 	return 0, "", errors.New("container info not found")
 }
 
-func GetHostInfo(token string, hostId int64) (hostSlug string, hostIP string, err error) {
-	res, err := authedGet(token, fmt.Sprintf("/api/v0/hosts/%d", hostId))
+func (na *NitrousAPI) GetHostInfo(hostId int64) (hostSlug string, hostIP string, err error) {
+	res, err := na.authedGet(fmt.Sprintf("/api/v0/hosts/%d", hostId))
 	if err != nil {
 		return "", "", err
 	}
@@ -88,12 +88,12 @@ func GetHostInfo(token string, hostId int64) (hostSlug string, hostIP string, er
 }
 
 // POST /api/v0/containers/<containerslug>/keys  with data - key
-func UploadPublicKey(token, containerSlug, pubKey string) error {
+func (na *NitrousAPI) UploadPublicKey(containerSlug, pubKey string) error {
 	params := map[string]string{
 		"key": pubKey,
 	}
 
-	res, err := authedPost(token, fmt.Sprintf("/api/v0/containers/%s/keys", containerSlug), params)
+	res, err := na.authedPost(fmt.Sprintf("/api/v0/containers/%s/keys", containerSlug), params)
 	if err != nil {
 		return err
 	}
@@ -113,20 +113,20 @@ func UploadPublicKey(token, containerSlug, pubKey string) error {
 	return nil
 }
 
-func authedGet(token, url string) (res *http.Response, err error) {
-	return Get(url, map[string]string{
-		"Authorization": "Bearer " + token,
+func (na *NitrousAPI) authedGet(url string) (res *http.Response, err error) {
+	return Get(na.host+url, map[string]string{
+		"Authorization": "Bearer " + na.token,
 	})
 }
 
-func authedPost(token, url string, params map[string]string) (res *http.Response, err error) {
-	return Post(url, map[string]string{
-		"Authorization": "Bearer " + token,
+func (na *NitrousAPI) authedPost(url string, params map[string]string) (res *http.Response, err error) {
+	return Post(na.host+url, map[string]string{
+		"Authorization": "Bearer " + na.token,
 	}, params)
 }
 
 func Get(url string, headers map[string]string) (res *http.Response, err error) {
-	req, err := http.NewRequest("GET", nitrousHost+url, nil)
+	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -142,7 +142,7 @@ func Post(requestUrl string, headers map[string]string, params map[string]string
 		data.Set(k, v)
 	}
 
-	req, err := http.NewRequest("POST", nitrousHost+requestUrl, strings.NewReader(data.Encode()))
+	req, err := http.NewRequest("POST", requestUrl, strings.NewReader(data.Encode()))
 	if err != nil {
 		return nil, err
 	}

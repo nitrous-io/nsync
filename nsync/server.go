@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"net/http/pprof"
 	"os"
+	"os/user"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -25,6 +27,7 @@ import (
 
 const START_PORT = 64876
 const MAX_PORT = 65535
+const DEFAULT_NITROUS_HOST = "https://www.nitrous.io"
 
 var (
 	upgrader = websocket.Upgrader{
@@ -53,9 +56,12 @@ var (
 )
 
 type Server struct {
+	token       string
+	nitrousHost string
 	nitrousPath string
 	sshKeyPath  string
 	pubKey      string
+	nitrousAPI  *nitrousapi.NitrousAPI
 
 	stopCh           chan struct{}
 	port             int
@@ -73,22 +79,6 @@ func (s *Server) ping(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(`{"status": "OK"}`))
 }
 
-func (s *Server) getBearerToken(r *http.Request) (string, error) {
-	authHeader := r.Header.Get("Authorization")
-	if authHeader != "" {
-		prefix := "Bearer "
-		if len(authHeader) <= len(prefix) ||
-			(!strings.HasPrefix(authHeader, prefix) &&
-				!strings.HasPrefix(authHeader, strings.ToLower(prefix))) {
-			return "", errInvalidRequest
-		}
-
-		return authHeader[len(prefix):], nil
-	}
-
-	return "", errInvalidRequest
-}
-
 func (s *Server) init(w http.ResponseWriter, r *http.Request) {
 	var err error
 
@@ -98,25 +88,38 @@ func (s *Server) init(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token, err := s.getBearerToken(r)
-	if err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		w.Write([]byte(fmt.Sprintf(`{"error": "%s"}`, errInvalidRequest)))
-		return
-	}
+	token := r.FormValue("token")
+	nitrousPath := r.FormValue("path")
+	nitrousHost := r.FormValue("host")
 
-	nitrousPath := r.FormValue("nitrousPath")
-	if nitrousPath == "" {
+	if token == "" {
 		w.WriteHeader(http.StatusForbidden)
-		w.Write([]byte(`{"error": "arguments are not sufficient"}`))
+		w.Write([]byte(`{"error": "token should be provided"}`))
 		return
 	}
 
+	if nitrousPath == "" {
+		var err error
+		nitrousPath, err = getDefaultNitrousPath()
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			w.Write([]byte(`{"error": "failed to initalize"}`))
+			return
+		}
+	}
+
+	if nitrousHost == "" {
+		nitrousHost = DEFAULT_NITROUS_HOST
+	}
+
+	s.token = token
 	s.nitrousPath = nitrousPath
-	s.sshKeyPath, s.pubKey, err = InitSSHInfo(token, nitrousPath)
+	s.nitrousHost = nitrousHost
+	s.nitrousAPI = nitrousapi.NewNitrousAPI(token, nitrousHost)
+	s.sshKeyPath, s.pubKey, err = InitSSHInfo(s.nitrousAPI, nitrousPath)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte(`{"error": "failed to initialize ssh info"}`))
+		w.Write([]byte(`{"error": "failed to initialize"}`))
 		return
 	}
 
@@ -125,16 +128,9 @@ func (s *Server) init(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) startPortForwarding(w http.ResponseWriter, r *http.Request) {
-	if s.nitrousPath == "" || s.sshKeyPath == "" || s.pubKey == "" {
+	if s.token == "" {
 		w.WriteHeader(http.StatusForbidden)
 		w.Write([]byte(`{"error": "not initialized yet"}`))
-		return
-	}
-
-	token, err := s.getBearerToken(r)
-	if err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		w.Write([]byte(fmt.Sprintf(`{"error": "%s"}`, errInvalidRequest)))
 		return
 	}
 
@@ -155,7 +151,7 @@ func (s *Server) startPortForwarding(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, sshUrl, err := nitrousapi.GetContainerInfo(token, containerSlug)
+	_, sshUrl, err := s.nitrousAPI.GetContainerInfo(containerSlug)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		w.Write([]byte(`{"error": "failed to get container info"}`))
@@ -195,16 +191,9 @@ func (s *Server) stopPortForwarding(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) startSync(w http.ResponseWriter, r *http.Request) {
-	if s.nitrousPath == "" || s.sshKeyPath == "" || s.pubKey == "" {
+	if s.token == "" {
 		w.WriteHeader(http.StatusForbidden)
 		w.Write([]byte(`{"error": "not initialized yet"}`))
-		return
-	}
-
-	token, err := s.getBearerToken(r)
-	if err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		w.Write([]byte(fmt.Sprintf(`{"error": "%s"}`, errInvalidRequest)))
 		return
 	}
 
@@ -226,7 +215,7 @@ func (s *Server) startSync(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// TODO: Need to make mutex lock not to allow more than 1 sync running for the same container
-	syncClient := filesync.NewSync(token, s.sshKeyPath, s.nitrousPath, containerSlug, remotePath, s.pubKey, s.event)
+	syncClient := filesync.NewSync(s.nitrousAPI, s.token, s.sshKeyPath, s.nitrousPath, containerSlug, remotePath, s.pubKey, s.event)
 	if err := syncClient.CreateLocalFolderIfAbsent(); err != nil {
 		log.Errorf("Failed to create folder: %s", err)
 		w.WriteHeader(http.StatusInternalServerError)
@@ -359,12 +348,10 @@ func (s *Server) Start() {
 				}
 				continue
 			} else if err != nil {
-				// there is some other error
 				log.Errorf("failed to listen due to: %+v", err)
 				errCh <- err
 				return
 			}
-			// listen successful
 			break
 		}
 
@@ -417,4 +404,13 @@ func (s *Server) stopAll() {
 			client.Stop()
 		}
 	}
+}
+
+func getDefaultNitrousPath() (string, error) {
+	u, err := user.Current()
+	if err != nil {
+		return "", err
+	}
+
+	return filepath.Join(u.HomeDir, "Nitrous"), nil
 }
