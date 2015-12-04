@@ -34,19 +34,24 @@ func TestMapToEnv(t *testing.T) {
 		"BAZ": "",
 	})
 
+	contains := func(arr []string, item string) bool {
+		for _, str := range arr {
+			if str == item {
+				return true
+			}
+		}
+		return false
+	}
+
 	if eLen := len(e); eLen != 3 {
 		t.Errorf("env returned should have 3 items, but got %d", eLen)
 	}
 
-	if foo := e[0]; foo != "FOO=123" {
-		t.Errorf("First item should equal \"FOO=123\", but got %s", foo)
-	}
+	expectedItems := []string{"FOO=123", "BAR=bar=124", "BAZ="}
 
-	if bar := e[1]; bar != "BAR=bar=124" {
-		t.Errorf("Second item should equal \"BAR=bar=124\", but got %s", bar)
-	}
-
-	if baz := e[2]; baz != "BAZ=" {
-		t.Errorf("Third item should equal \"BAZ=\", but got %s", baz)
+	for _, expectedItem := range expectedItems {
+		if !contains(e, expectedItem) {
+			t.Errorf(`Expect %v to have \"%s\"`, e, expectedItem)
+		}
 	}
 }
