@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"golang.org/x/crypto/ssh"
 
@@ -71,6 +72,10 @@ func main() {
 
 	select {
 	case err := <-errCh:
+		var code int
+		if _, err := fmt.Sscanf(err.Error(), "Process exited with: %d", &code); err == nil {
+			os.Exit(code)
+		}
 		panic(err)
 	case <-done:
 		os.Exit(0)
@@ -101,6 +106,7 @@ func copyPipes(session *ssh.Session, done chan struct{}) error {
 
 	terminate := func() {
 		close(c)
+		time.Sleep(100 * time.Millisecond)
 		done <- struct{}{}
 	}
 
