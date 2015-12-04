@@ -248,7 +248,7 @@ func (s *Sync) Start() {
 			}
 		case err := <-errorChan: // remote watcher error
 			{
-				log.Errorf("Lost connection to server: %+v", err)
+				log.Errorf("Got error message from remote watcher: %+v", err)
 				if s.remoteWatcherRetryCount < maxRemoteWatcherRetry {
 					time.Sleep(5 * time.Second)
 					go s.startRemoteWatcher(remoteChan, errorChan, s.stopCh)
