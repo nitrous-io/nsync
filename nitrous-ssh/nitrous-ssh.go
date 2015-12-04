@@ -53,12 +53,9 @@ func main() {
 
 	// unescape "/////" (*nix) "\\\\\" (windows) back to space
 	sshKeyPath = strings.Replace(sshKeyPath, strings.Repeat(string(os.PathSeparator), 5), " ", -1)
-
 	remoteCmd = strings.Join(subOptions.Args()[0:], " ")
 
 	sshUrl := fmt.Sprintf("ssh://%s@%s:%d", username, host, port)
-	fmt.Println(sshKeyPath, sshUrl, remoteCmd)
-
 	session, err := createSession(sshUrl, sshKeyPath)
 	if err != nil {
 		panic(err)
