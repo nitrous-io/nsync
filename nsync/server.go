@@ -82,7 +82,7 @@ func (s *Server) ping(w http.ResponseWriter, r *http.Request) {
 func (s *Server) init(w http.ResponseWriter, r *http.Request) {
 	var err error
 
-	if s.nitrousPath != "" && s.sshKeyPath != "" && s.pubKey != "" {
+	if s.isInitialized() {
 		w.WriteHeader(http.StatusForbidden)
 		w.Write([]byte(`{"error": "already initialized nsync"}`))
 		return
@@ -94,7 +94,7 @@ func (s *Server) init(w http.ResponseWriter, r *http.Request) {
 
 	if token == "" {
 		w.WriteHeader(http.StatusForbidden)
-		w.Write([]byte(`{"error": "token should be provided"}`))
+		w.Write([]byte(`{"error": "token is required"}`))
 		return
 	}
 
@@ -128,9 +128,9 @@ func (s *Server) init(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) startPortForwarding(w http.ResponseWriter, r *http.Request) {
-	if s.token == "" {
+	if !s.isInitialized() {
 		w.WriteHeader(http.StatusForbidden)
-		w.Write([]byte(`{"error": "not initialized yet"}`))
+		w.Write([]byte(`{"error": "token is required"}`))
 		return
 	}
 
@@ -178,6 +178,12 @@ func (s *Server) startPortForwarding(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) stopPortForwarding(w http.ResponseWriter, r *http.Request) {
+	if !s.isInitialized() {
+		w.WriteHeader(http.StatusForbidden)
+		w.Write([]byte(`{"error": "token is required"}`))
+		return
+	}
+
 	containerSlug := mux.Vars(r)["slug"]
 	log.Debugf("Stop port forwarding for container %s", containerSlug)
 
@@ -191,9 +197,9 @@ func (s *Server) stopPortForwarding(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) startSync(w http.ResponseWriter, r *http.Request) {
-	if s.token == "" {
+	if !s.isInitialized() {
 		w.WriteHeader(http.StatusForbidden)
-		w.Write([]byte(`{"error": "not initialized yet"}`))
+		w.Write([]byte(`{"error": "token is required"}`))
 		return
 	}
 
@@ -238,6 +244,12 @@ func (s *Server) startSync(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) stopSync(w http.ResponseWriter, r *http.Request) {
+	if !s.isInitialized() {
+		w.WriteHeader(http.StatusForbidden)
+		w.Write([]byte(`{"error": "token is required"}`))
+		return
+	}
+
 	containerSlug := mux.Vars(r)["slug"]
 	log.Debugf("Stop syncing for container %s", containerSlug)
 
@@ -251,6 +263,12 @@ func (s *Server) stopSync(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) subscribe(w http.ResponseWriter, r *http.Request) {
+	if !s.isInitialized() {
+		w.WriteHeader(http.StatusForbidden)
+		w.Write([]byte(`{"error": "token is required"}`))
+		return
+	}
+
 	log.Debugf("subscribe event")
 
 	conn, err := upgrader.Upgrade(w, r, nil)
@@ -404,6 +422,10 @@ func (s *Server) stopAll() {
 			client.Stop()
 		}
 	}
+}
+
+func (s *Server) isInitialized() bool {
+	return s.token != "" && s.nitrousPath != "" && s.sshKeyPath != "" && s.pubKey != ""
 }
 
 func getDefaultNitrousPath() (string, error) {

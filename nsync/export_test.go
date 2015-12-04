@@ -1,23 +1,19 @@
 package nsync
 
 import (
-	"fmt"
-	"net/http"
-
 	"github.com/gorilla/mux"
+	"github.com/nitrous-io/nsync/nsync/nitrousapi"
 )
 
 func (s *Server) Router() *mux.Router {
 	return s.router
 }
 
-func (s *Server) SetSSHInfo(nitrousPath, sshKeyPath, pubKey string) {
+func (s *Server) SetSSHInfo(token, nitrousPath, sshKeyPath, pubKey string) {
+	s.token = token
 	s.nitrousPath = nitrousPath
 	s.sshKeyPath = sshKeyPath
 	s.pubKey = pubKey
-}
 
-func (s *Server) SetToken(w http.ResponseWriter, token string) {
-	w.Header().Set("Authorization", fmt.Sprintf("Bearer %s", token))
-
+	s.nitrousAPI = nitrousapi.NewNitrousAPI(token, "https://test.example")
 }
