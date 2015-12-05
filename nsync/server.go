@@ -206,7 +206,7 @@ func (s *Server) startSync(w http.ResponseWriter, r *http.Request) {
 	containerSlug := mux.Vars(r)["slug"]
 	log.Debugf("Start syncing for container %s", containerSlug)
 
-	remotePath := r.FormValue("remotePath")
+	remotePath := r.FormValue("remote_path")
 	if remotePath == "" {
 		w.WriteHeader(http.StatusForbidden)
 		w.Write([]byte(`{"error": "arguments are not sufficient"}`))
