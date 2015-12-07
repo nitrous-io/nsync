@@ -139,6 +139,7 @@ func (s *Server) startPortForwarding(w http.ResponseWriter, r *http.Request) {
 
 	portsInStr := r.FormValue("ports")
 	if portsInStr == "" {
+		log.Errorf("Failed port forwarding for container: %s, err: port is not provided", containerSlug)
 		w.WriteHeader(http.StatusForbidden)
 		w.Write([]byte(`{"error": "arguments are not sufficient"}`))
 		return
@@ -146,6 +147,7 @@ func (s *Server) startPortForwarding(w http.ResponseWriter, r *http.Request) {
 
 	ports, err := parsePorts(portsInStr)
 	if err != nil {
+		log.Errorf("Failed port forwarding for container: %s, err: %s", containerSlug, err)
 		w.WriteHeader(http.StatusForbidden)
 		w.Write([]byte(`{"error": "invalid ports"}`))
 		return
@@ -153,25 +155,33 @@ func (s *Server) startPortForwarding(w http.ResponseWriter, r *http.Request) {
 
 	_, sshUrl, err := s.nitrousAPI.GetContainerInfo(containerSlug)
 	if err != nil {
+		log.Errorf("Failed port forwarding for container: %s, err: %s", containerSlug, err)
 		w.WriteHeader(http.StatusInternalServerError)
 		w.Write([]byte(`{"error": "failed to get container info"}`))
 		return
 	}
 
 	if client, ok := s.sshTunnelClients[containerSlug]; ok && client != nil {
+		log.Warnf("Port forwarding was enabled. Restarting.")
 		client.Stop()
 		s.sshTunnelClients[containerSlug] = nil
 	}
 
 	host, config, err := sshconfig.Config(sshUrl, s.sshKeyPath)
 	if err != nil {
+		log.Errorf("Failed port forwarding for container: %s, err: %s", containerSlug, err)
 		w.WriteHeader(http.StatusInternalServerError)
 		w.Write([]byte(`{"error": "failed to get ssh config"}`))
 		return
 	}
 
 	s.sshTunnelClients[containerSlug] = tunnel.NewSSHTunnel(containerSlug, host, config, ports, s.event)
-	go s.sshTunnelClients[containerSlug].Start()
+	if err := s.sshTunnelClients[containerSlug].Start(); err != nil {
+		log.Errorf("Failed port forwarding for container: %s, err: %s", containerSlug, err)
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`{"error": "failed to start port forwarding"}`))
+		return
+	}
 
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(`{"status": "OK"}`))

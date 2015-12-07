@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 
 	"golang.org/x/crypto/ssh"
 
@@ -38,22 +40,26 @@ func NewSSHTunnel(containerSlug, sshHost string, sshConfig *ssh.ClientConfig, po
 	return sshTunnel
 }
 
-func (st *SSHTunnel) Start() {
+func (st *SSHTunnel) Start() error {
 	log.Infof("Start forwarding: %+v", st.ports)
 
 	sshClient, err := ssh.Dial("tcp", st.sshHost, st.sshConfig)
 	if err != nil {
-		log.Errorf("ssh.Conn: %v", err)
-		return
+		log.Errorf("Failed to ssh.Dial: %v", err)
+		return err
 	}
 
 	for i := 0; i < len(st.ports); i++ {
 		port := st.ports[i]
-		addr := fmt.Sprintf("127.0.0.1:%d", port)
-		listener, err := net.Listen("tcp", addr)
-		if err != nil {
+		address := fmt.Sprintf("127.0.0.1:%d", port)
+		listener, err := net.Listen("tcp", address)
+		if err != nil && err.(*net.OpError).Err.(*os.SyscallError).Err == syscall.EADDRINUSE {
+			st.StopWithError(err)
+			return fmt.Errorf("Port %d is in use", port)
+		} else if err != nil {
 			log.Errorf("Failed to listen to %d: %v", port, err)
-			return
+			st.StopWithError(err)
+			return err
 		}
 
 		st.listeners = append(st.listeners, listener)
@@ -62,13 +68,15 @@ func (st *SSHTunnel) Start() {
 			for {
 				localConn, err := listener.Accept()
 				if err != nil {
-					log.Errorf("listen.Accept failed: %s", err)
+					log.Errorf("Failed to listen.Accept failed: %s", err)
+					st.StopWithError(err)
 					return
 				}
 
-				stream, err := sshClient.Dial("tcp", addr)
+				stream, err := sshClient.Dial("tcp", address)
 				if err != nil {
-					log.Errorf("sshClientConn.Dial with %s failed: %s", addr, err)
+					log.Errorf("Failed to sshClientConn.Dial with %s failed: %s", address, err)
+					st.StopWithError(err)
 					return
 				}
 
@@ -77,10 +85,8 @@ func (st *SSHTunnel) Start() {
 		}()
 	}
 
-	st.event.Send("container.started-port-forwarding", map[string]string{
-		"slug":  st.containerSlug,
-		"ports": st.portToString(),
-	})
+	st.publishStartEvent()
+	return nil
 }
 
 func (st *SSHTunnel) Stop() {
@@ -88,13 +94,18 @@ func (st *SSHTunnel) Stop() {
 		st.listeners[i].Close()
 	}
 
-	st.event.Send("container.stopped-port-forwarding", map[string]string{
-		"slug":  st.containerSlug,
-		"ports": st.portToString(),
-	})
+	st.publishStopEvent(nil)
 }
 
-func pipe(src io.ReadWriteCloser, dst io.ReadWriteCloser) (int64, int64) {
+func (st *SSHTunnel) StopWithError(err error) {
+	for i := 0; i < len(st.listeners); i++ {
+		st.listeners[i].Close()
+	}
+
+	st.publishStopEvent(err)
+}
+
+func pipe(src io.ReadWriteCloser, dst io.ReadWriteCloser) {
 	var sent, received int64
 	var c = make(chan bool)
 	var o sync.Once
@@ -116,7 +127,6 @@ func pipe(src io.ReadWriteCloser, dst io.ReadWriteCloser) (int64, int64) {
 	}()
 
 	<-c
-	return sent, received
 }
 
 func parsePort(str string) ([]int, error) {
@@ -142,4 +152,27 @@ func (st *SSHTunnel) portToString() string {
 	}
 
 	return strings.Join(portsStr, ",")
+}
+
+func (st *SSHTunnel) publishStartEvent() {
+	st.event.Send("container.started-port-forwarding", map[string]string{
+		"slug":  st.containerSlug,
+		"ports": st.portToString(),
+	})
+
+	log.Debugf("Published container.started-port-forwarding event with %+v", st)
+}
+
+func (st *SSHTunnel) publishStopEvent(err error) {
+	message := map[string]string{
+		"slug":  st.containerSlug,
+		"ports": st.portToString(),
+	}
+
+	if err != nil {
+		message["error"] = err.Error()
+	}
+
+	st.event.Send("container.stopped-port-forwarding", message)
+	log.Debugf("Published container.stopped-port-forwarding event with %+v: %s", st, err)
 }
