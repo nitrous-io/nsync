@@ -44,7 +44,13 @@ var (
 )
 
 const fileSyncDelay = 100 * time.Millisecond
+const maxRemoteWatcherRetry = 1
+const retryInterval = 5 * time.Second
+
+/*
 const maxRemoteWatcherRetry = 5
+const retryInterval = 5 * time.Second
+*/
 
 func init() {
 	createSymlinkIfNotExist := func() {
@@ -238,12 +244,16 @@ func (s *Sync) Start() {
 		case err := <-s.errorCh: // local file sync error
 			{
 				log.Errorf("Local watcher is terminated: %+v", err)
-				s.Stop()
+				s.StopWithError(err)
 				return
 			}
 		case change := <-remoteChan: // remote file system change
 			{
-				s.remoteWatcherRetryCount = 0 // reset the counter
+				if s.remoteWatcherRetryCount != 0 {
+					log.Debugf("Remote watcher remote count is reset with %s", change)
+					s.remoteWatcherRetryCount = 0 // reset the counter
+				}
+
 				match := remoteChangeRe.FindStringSubmatch(change)
 				if len(match) >= 2 {
 					handleChange(match[1], false)
@@ -253,19 +263,20 @@ func (s *Sync) Start() {
 			{
 				log.Errorf("Got error message from remote watcher: %+v", err)
 				if s.remoteWatcherRetryCount < maxRemoteWatcherRetry {
-					time.Sleep(5 * time.Second)
+					time.Sleep(retryInterval)
 					go s.startRemoteWatcher(remoteChan, errorChan, s.stopCh)
 					s.remoteWatcherRetryCount++
 					log.Infof("Retrying to connect to server: %d", s.remoteWatcherRetryCount)
 				} else {
 					log.Info("It reached limit of retrying. Stopping sync")
-					s.Stop()
+					s.StopWithError(err)
 					return
 				}
 			}
 		case <-s.stopCh: // stop event from main process
 			{
 				log.Infof("Stopping syncing...")
+				s.Stop()
 				return
 			}
 		}
@@ -499,12 +510,29 @@ func (s *Sync) parseSyncIgnore() error {
 }
 
 func (s *Sync) Stop() {
+	if s.state == "stopped" {
+		return
+	}
+
 	s.state = "stopped"
 	s.event.Send("container.stopped-sync", map[string]string{
 		"slug": s.containerSlug,
 	})
-	s.stopCh <- struct{}{}
 	log.Infof("sync is stopped: %s", s.containerSlug)
+}
+
+func (s *Sync) StopWithError(err error) {
+	s.state = "stopped"
+	message := map[string]string{
+		"slug": s.containerSlug,
+	}
+
+	if err != nil {
+		message["error"] = err.Error()
+	}
+
+	s.event.Send("container.stopped-sync", message)
+	log.Infof("sync is stopped for %s with error: %s", s.containerSlug, err)
 }
 
 func (s Sync) IsStopped() bool {
