@@ -145,7 +145,7 @@ func (s *Server) startPortForwarding(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ports, err := parsePorts(portsInStr)
+	ports, err := tunnel.ParsePort(portsInStr)
 	if err != nil {
 		log.Errorf("Failed port forwarding for container: %s, err: %s", containerSlug, err)
 		w.WriteHeader(http.StatusForbidden)

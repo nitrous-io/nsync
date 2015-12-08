@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -17,7 +18,16 @@ import (
 	"github.com/nitrous-io/nsync/nsync/event"
 )
 
-var errInvalidPorts = errors.New("Invalid ports are given")
+const (
+	minPort = 1000
+	maxPort = 65535
+)
+
+var (
+	ErrInvalidPortPattern = errors.New("Invalid port pattern")
+	ErrInvalidPortNumber  = errors.New("Port number is out of range")
+	portRangePattern      = regexp.MustCompile(`([0-9]+)(-([0-9]+))?`)
+)
 
 type SSHTunnel struct {
 	containerSlug string
@@ -124,16 +134,58 @@ func pipe(src io.ReadWriteCloser, dst io.ReadWriteCloser) {
 	<-c
 }
 
-func parsePort(str string) ([]int, error) {
+func ParsePort(str string) ([]int, error) {
 	var ports []int
+	portsMap := make(map[int]struct{})
+
+	insertPort := func(port int) {
+		if _, ok := portsMap[port]; ok {
+			return
+		}
+		portsMap[port] = struct{}{}
+		ports = append(ports, port)
+	}
+
 	portsInStr := strings.Split(str, ",")
 	for i := 0; i < len(portsInStr); i++ {
-		port, err := strconv.Atoi(portsInStr[i])
-		if err != nil {
-			return nil, errInvalidPorts
+		matches := portRangePattern.FindStringSubmatch(portsInStr[i])
+		if len(matches) != 4 {
+			return nil, ErrInvalidPortPattern
 		}
 
-		ports = append(ports, port)
+		port, err := strconv.Atoi(matches[1])
+		if err != nil {
+			return nil, ErrInvalidPortPattern
+		}
+
+		if port < minPort || port > maxPort {
+			return nil, ErrInvalidPortNumber
+		}
+		insertPort(port)
+
+		if matches[3] != "" {
+			secondPort, err := strconv.Atoi(matches[3])
+			if err != nil {
+				return nil, ErrInvalidPortPattern
+			}
+
+			if port < minPort || port > maxPort {
+				return nil, ErrInvalidPortNumber
+			}
+			insertPort(secondPort)
+
+			// This is to make it work even if first port is bigger than second port
+			firstPort := port
+			lastPort := secondPort
+			if port > secondPort {
+				firstPort = secondPort
+				lastPort = port
+			}
+
+			for i := firstPort + 1; i < lastPort; i++ {
+				insertPort(i)
+			}
+		}
 	}
 
 	return ports, nil
