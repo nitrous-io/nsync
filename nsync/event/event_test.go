@@ -1,10 +1,11 @@
-package event
+package event_test
 
 import (
 	"encoding/json"
 	"testing"
 	"time"
 
+	"github.com/nitrous-io/nsync/nsync/event"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 )
@@ -17,7 +18,7 @@ func Test(t *testing.T) {
 var _ = Describe("nsync/event", func() {
 	Describe("Send", func() {
 		It("sends a message to channel", func() {
-			e := NewEvent(10)
+			e := event.NewEvent(10)
 
 			e.Send("event-name", map[string]string{
 				"hello": "world",
@@ -25,7 +26,7 @@ var _ = Describe("nsync/event", func() {
 
 			select {
 			case b := <-e.MsgCh:
-				var message Message
+				var message event.Message
 				err := json.Unmarshal(b, &message)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(message.Name).To(Equal("event-name"))
