@@ -44,13 +44,8 @@ var (
 )
 
 const fileSyncDelay = 100 * time.Millisecond
-const maxRemoteWatcherRetry = 1
-const retryInterval = 5 * time.Second
-
-/*
 const maxRemoteWatcherRetry = 5
 const retryInterval = 5 * time.Second
-*/
 
 func init() {
 	createSymlinkIfNotExist := func() {
