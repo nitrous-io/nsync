@@ -53,12 +53,12 @@ func (st *SSHTunnel) Start() error {
 		port := st.ports[i]
 		address := fmt.Sprintf("127.0.0.1:%d", port)
 		listener, err := net.Listen("tcp", address)
-		if err != nil && err.(*net.OpError).Err.(*os.SyscallError).Err == syscall.EADDRINUSE {
-			st.StopWithError(err)
-			return fmt.Errorf("Port %d is in use", port)
-		} else if err != nil {
+		if err != nil {
+			st.stop()
 			log.Errorf("Failed to listen to %d: %v", port, err)
-			st.StopWithError(err)
+			if err.(*net.OpError).Err.(*os.SyscallError).Err == syscall.EADDRINUSE {
+				return fmt.Errorf("Port %d is in use", port)
+			}
 			return err
 		}
 
@@ -69,14 +69,14 @@ func (st *SSHTunnel) Start() error {
 				localConn, err := listener.Accept()
 				if err != nil {
 					log.Errorf("Failed to listen.Accept failed: %s", err)
-					st.StopWithError(err)
+					st.stop()
 					return
 				}
 
 				stream, err := sshClient.Dial("tcp", address)
 				if err != nil {
 					log.Errorf("Failed to sshClientConn.Dial with %s failed: %s", address, err)
-					st.StopWithError(err)
+					st.stop()
 					return
 				}
 
@@ -90,19 +90,14 @@ func (st *SSHTunnel) Start() error {
 }
 
 func (st *SSHTunnel) Stop() {
-	for i := 0; i < len(st.listeners); i++ {
-		st.listeners[i].Close()
-	}
-
+	st.stop()
 	st.publishStopEvent(nil)
 }
 
-func (st *SSHTunnel) StopWithError(err error) {
+func (st *SSHTunnel) stop() {
 	for i := 0; i < len(st.listeners); i++ {
 		st.listeners[i].Close()
 	}
-
-	st.publishStopEvent(err)
 }
 
 func pipe(src io.ReadWriteCloser, dst io.ReadWriteCloser) {
