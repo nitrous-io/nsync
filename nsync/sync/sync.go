@@ -183,10 +183,12 @@ func (s *Sync) Start() {
 		} else {
 			s.syncing = true
 			go func() {
+				s.publishMessage("container.sync-started", nil)
 				s.performSync()
 				s.syncingLock.Lock()
 				s.syncing = false
 				s.syncingLock.Unlock()
+				s.publishMessage("container.sync-finished", nil)
 			}()
 		}
 		s.syncingLock.Unlock()
@@ -226,9 +228,7 @@ func (s *Sync) Start() {
 	}
 	defer notify.Stop(notifyChan)
 
-	s.event.Send("container.started-sync", map[string]string{
-		"slug": s.containerSlug,
-	})
+	s.publishMessage("container.sync-enabled", nil)
 
 	for {
 		select {
@@ -498,8 +498,10 @@ func (s *Sync) parseSyncIgnore() error {
 			return err
 		}
 		s.syncIgnoreList = append(s.syncIgnoreList, syncIgnoreList...)
+	} else if err != nil && os.IsNotExist(err) {
+		log.Infof(".syncignore not found: %+v", err)
 	} else {
-		log.Errorf("Failed to get .syncignore file information: %+v", err)
+		log.Errorf("Error on check stat of .syncignore: %+v", err)
 	}
 	return nil
 }
@@ -510,14 +512,19 @@ func (s *Sync) Stop() {
 	}
 
 	s.state = "stopped"
-	s.event.Send("container.stopped-sync", map[string]string{
-		"slug": s.containerSlug,
-	})
-	log.Infof("sync is stopped: %s", s.containerSlug)
+	s.publishMessage("container.sync-disabled", nil)
 }
 
 func (s *Sync) StopWithError(err error) {
 	s.state = "stopped"
+	s.publishMessage("container.sync-disabled", err)
+}
+
+func (s *Sync) IsStopped() bool {
+	return s.state == "stopped"
+}
+
+func (s *Sync) publishMessage(title string, err error) {
 	message := map[string]string{
 		"slug": s.containerSlug,
 	}
@@ -525,11 +532,10 @@ func (s *Sync) StopWithError(err error) {
 	if err != nil {
 		message["error"] = err.Error()
 	}
-
-	s.event.Send("container.stopped-sync", message)
-	log.Infof("sync is stopped for %s with error: %s", s.containerSlug, err)
-}
-
-func (s Sync) IsStopped() bool {
-	return s.state == "stopped"
+	s.event.Send(title, message)
+	if err != nil {
+		log.Infof("Published message %s with %+v: %s", title, message, err)
+	} else {
+		log.Infof("Published message %s with %+v", title, message)
+	}
 }
