@@ -90,9 +90,7 @@ func (s *SSHRemoteCmd) Run(outputChan chan<- string) error {
 	}()
 
 	cleanup := func() {
-		if err := session.Close(); err != nil {
-			logrus.Errorf("Failed to close a session: %s", err)
-		}
+		session.Close()
 		s.closeConnection()
 	}
 
