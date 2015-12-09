@@ -129,7 +129,10 @@ type Sync struct {
 
 	state   string
 	errorCh chan error
-	stopCh  chan struct{}
+
+	stopCh       chan struct{}
+	stopRemoteCh chan struct{}
+	stopUnisonCh chan struct{}
 }
 
 func NewSync(nitrousAPI *nitrousapi.NitrousAPI, token, sshKeyPath, nitrousFolderPath, containerSlug, remotePath, pubKey string, event *event.Event) *Sync {
@@ -166,15 +169,13 @@ func NewSync(nitrousAPI *nitrousapi.NitrousAPI, token, sshKeyPath, nitrousFolder
 	s.hostSlug = hostSlug
 	s.localPath = filepath.Join(s.nitrousFolderPath, s.hostSlug, s.containerSlug)
 
-	s.errorCh = make(chan error)
-	s.stopCh = make(chan struct{})
 	s.remoteWatcherRetryCount = 0
 
 	return s
 }
 
 func (s *Sync) Start() {
-	s.state = "started"
+	s.setState("started")
 
 	runSync := func() {
 		s.syncingLock.Lock()
@@ -194,7 +195,13 @@ func (s *Sync) Start() {
 		s.syncingLock.Unlock()
 	}
 
+	s.errorCh = make(chan error)
+
 	s.performSync()
+	// When stopped while first syncing
+	if s.IsStopped() {
+		return
+	}
 
 	notifyChan := make(chan notify.EventInfo, 1000)
 	remoteChan := make(chan string, 1000)
@@ -220,7 +227,8 @@ func (s *Sync) Start() {
 	}
 
 	log.Debugf("Watching %s/%s...", s.sshUrl, s.remotePath)
-	go s.startRemoteWatcher(remoteChan, errorChan, s.stopCh)
+	s.stopRemoteCh = make(chan struct{})
+	go s.startRemoteWatcher(remoteChan, errorChan, s.stopRemoteCh)
 
 	log.Debugf("Watching %s...", s.localPath)
 	if err := notify.Watch(filepath.Join(s.localPath, "..."), notifyChan, notify.All); err != nil {
@@ -229,6 +237,7 @@ func (s *Sync) Start() {
 	defer notify.Stop(notifyChan)
 
 	s.publishMessage("container.sync-enabled", nil)
+	s.stopCh = make(chan struct{})
 
 	for {
 		select {
@@ -239,7 +248,7 @@ func (s *Sync) Start() {
 		case err := <-s.errorCh: // local file sync error
 			{
 				log.Errorf("Local watcher is terminated: %+v", err)
-				s.StopWithError(err)
+				s.setState("stopped")
 				return
 			}
 		case change := <-remoteChan: // remote file system change
@@ -257,21 +266,21 @@ func (s *Sync) Start() {
 		case err := <-errorChan: // remote watcher error
 			{
 				log.Errorf("Got error message from remote watcher: %+v", err)
-				if s.remoteWatcherRetryCount < maxRemoteWatcherRetry {
+				if s.remoteWatcherRetryCount < maxRemoteWatcherRetry || !s.IsStopped() {
 					time.Sleep(retryInterval)
 					go s.startRemoteWatcher(remoteChan, errorChan, s.stopCh)
 					s.remoteWatcherRetryCount++
 					log.Infof("Retrying to connect to server: %d", s.remoteWatcherRetryCount)
 				} else {
 					log.Info("It reached limit of retrying. Stopping sync")
-					s.StopWithError(err)
+					s.setState("stopped")
 					return
 				}
 			}
 		case <-s.stopCh: // stop event from main process
 			{
-				log.Infof("Stopping syncing...")
-				s.Stop()
+				log.Infof("s.stopCh got message")
+				s.setState("stopped")
 				return
 			}
 		}
@@ -315,15 +324,32 @@ func (s *Sync) performSync() {
 		s.lastError = err
 	}
 
-	out, err := cmd.CombinedOutput()
-	outStr := string(out)
+	output := make(chan string)
+	errCh := make(chan error)
+	s.stopUnisonCh = make(chan struct{})
+	go func() {
+		b, err := cmd.CombinedOutput()
+		if err != nil {
+			errCh <- err
+		}
+		output <- string(b)
+	}()
 
-	if err != nil {
+	select {
+	case outStr := <-output:
+		log.Debugf("sync: Output from unison: %s", outStr)
+		s.handleOutput(outStr)
+	case err := <-errCh:
 		log.Errorf("sync: Failed to run unison: %s", err)
 		s.lastError = err
+	case <-s.stopUnisonCh:
+		log.Infof("sync: Killing unison")
+		cmd.Process.Kill()
+		return
 	}
 
-	s.handleOutput(outStr)
+	close(s.stopUnisonCh)
+	s.stopUnisonCh = nil
 
 	if s.lastError != nil {
 		log.Errorf("sync: Error occurred: %v", s.lastError)
@@ -341,6 +367,10 @@ func (s *Sync) performSync() {
 		}
 
 		time.AfterFunc(s.retryDelay, func() {
+			if s.IsStopped() {
+				return
+			}
+
 			log.Info("sync: Retrying...")
 			s.performSync()
 		})
@@ -507,17 +537,49 @@ func (s *Sync) parseSyncIgnore() error {
 }
 
 func (s *Sync) Stop() {
-	if s.state == "stopped" {
+	if s.IsStopped() {
 		return
 	}
 
-	s.state = "stopped"
+	s.setState("stopped")
+	s.dirty = false
+	if s.stopCh != nil {
+		s.stopCh <- struct{}{}
+	}
+
+	if s.stopRemoteCh != nil {
+		s.stopRemoteCh <- struct{}{}
+	}
+
+	if s.stopUnisonCh != nil {
+		s.stopUnisonCh <- struct{}{}
+	}
 	s.publishMessage("container.sync-disabled", nil)
 }
 
 func (s *Sync) StopWithError(err error) {
-	s.state = "stopped"
+	if s.IsStopped() {
+		return
+	}
+
+	s.setState("stopped")
+	s.dirty = false
+	if s.stopCh != nil {
+		s.stopCh <- struct{}{}
+	}
+
+	if s.stopRemoteCh != nil {
+		s.stopRemoteCh <- struct{}{}
+	}
+
+	if s.stopUnisonCh != nil {
+		s.stopUnisonCh <- struct{}{}
+	}
 	s.publishMessage("container.sync-disabled", err)
+}
+
+func (s *Sync) setState(state string) {
+	s.state = state
 }
 
 func (s *Sync) IsStopped() bool {
