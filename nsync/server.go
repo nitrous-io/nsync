@@ -273,12 +273,6 @@ func (s *Server) stopSync(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) subscribe(w http.ResponseWriter, r *http.Request) {
-	if !s.isInitialized() {
-		w.WriteHeader(http.StatusForbidden)
-		w.Write([]byte(`{"error": "token is required"}`))
-		return
-	}
-
 	log.Debugf("subscribe event")
 
 	conn, err := upgrader.Upgrade(w, r, nil)
