@@ -594,7 +594,12 @@ func (s *Sync) publishMessage(title string, err error) {
 	if err != nil {
 		message["error"] = err.Error()
 	}
-	s.event.Send(title, message)
+
+	if err := s.event.Send(title, message); err != nil {
+		log.Infof("Failed to publish message %s: %s", title, message, err)
+		return
+	}
+
 	if err != nil {
 		log.Infof("Published message %s with %+v: %s", title, message, err)
 	} else {

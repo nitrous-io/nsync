@@ -42,9 +42,9 @@ var (
 	}
 
 	// Time allowed to write a message to the peer.
-	writeWait = 10 * time.Second
+	writeWait = 1 * time.Second
 	// Time allowed to read the next pong message from the peer.
-	pongWait = 60 * time.Second
+	pongWait = 5 * time.Second
 	// Send pings to peer with this period. Must be less than pongWait.
 	pingPeriod = (pongWait * 9) / 10
 
@@ -295,17 +295,17 @@ func (s *Server) writePump(conn *websocket.Conn) {
 	for {
 		select {
 		case message, ok := <-s.event.MsgCh:
-			log.Debugf("got message: %+v", string(message))
-			if !ok {
-				s.writeToConn(conn, websocket.CloseMessage, []byte{})
-				return
-			}
-			if err := s.writeToConn(conn, websocket.TextMessage, message); err != nil {
-				log.Errorf("Failed to send: %+v %+v", message, err)
-				return
+			log.Debugf("sending message: %+v.", string(message))
+			if ok {
+				if err := s.writeToConn(conn, websocket.TextMessage, message); err != nil {
+					log.Errorf("Failed to send message: %+v %+v", message, err)
+					return
+				}
+			} else {
+				log.Warnf("Got empty message")
 			}
 		case <-ticker.C:
-			if err := s.writeToConn(conn, websocket.PingMessage, []byte{}); err != nil {
+			if err := s.writeToConn(conn, websocket.TextMessage, []byte("h")); err != nil {
 				log.Errorf("Failed to ping: %+v", err)
 				return
 			}
