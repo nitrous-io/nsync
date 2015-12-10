@@ -17,6 +17,7 @@ import (
 	"github.com/kardianos/osext"
 	"github.com/nitrous-io/nsync/nsync/nitrousapi"
 	"github.com/nitrous-io/nsync/pkg/envmap"
+	"github.com/nitrous-io/nsync/pkg/hidefiles"
 	"github.com/nitrous-io/nsync/pkg/logger"
 	"github.com/nitrous-io/nsync/pkg/pathmatch"
 	"github.com/nitrous-io/nsync/pkg/shortname"
@@ -290,6 +291,12 @@ func (s *Sync) CreateLocalFolderIfAbsent() error {
 			if err := os.MkdirAll(s.localPath, 0700); err != nil {
 				return err
 			}
+
+			logger.Debugf("Hide folder %s for the first sync", s.localPath)
+			if err := hidefiles.Hide(s.localPath); err != nil {
+				return err
+			}
+			s.isFolderHidden = true
 		} else {
 			return err
 		}
@@ -335,12 +342,21 @@ func (s *Sync) performSync() {
 	select {
 	case outStr := <-output:
 		logger.Debugf("sync: Output from unison: %s", outStr)
+		if s.isFolderHidden {
+			if err := hidefiles.Unhide(s.localPath); err == nil {
+				logger.Debugf("Unhided folder %s for the first sync", s.localPath)
+				s.isFolderHidden = false
+			} else {
+				logger.Errorf("Failed to unhide folder %s", s.localPath)
+			}
+		}
 		s.handleOutput(outStr)
 	case err := <-errCh:
 		logger.Errorf("sync: Failed to run unison: %s", err)
 		s.lastError = err
 	case <-s.stopUnisonCh:
 		logger.Infof("sync: Killing unison")
+		s.stopUnisonCh <- struct{}{}
 		cmd.Process.Kill()
 		return
 	}
