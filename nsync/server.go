@@ -305,7 +305,7 @@ func (s *Server) Start() {
 			break
 		}
 
-		logger.Infof("Nsync ready at port %d", s.port)
+		logger.Event("listening", s.port)
 		if err := httpserver.Serve(server, listener); err != nil {
 			logger.Errorf("server is stopped due to: %+v", err)
 			errCh <- err

@@ -12,7 +12,7 @@ import (
 
 func main() {
 	go logger.Start()
-	logger.Infof("Nsync pid: %d", os.Getpid())
+	logger.Event("pid", os.Getpid())
 
 	stopCh := make(chan struct{})
 	server := nsync.NewServer(stopCh)
