@@ -6,7 +6,7 @@ import (
 	"io"
 	"time"
 
-	"github.com/Sirupsen/logrus"
+	"github.com/nitrous-io/nsync/pkg/logger"
 	"github.com/nitrous-io/nsync/pkg/sshconfig"
 
 	"golang.org/x/crypto/ssh"
@@ -172,7 +172,7 @@ func (s *SSHRemoteCmd) makeSessionWithKeepalive() (*ssh.Session, error) {
 func (s *SSHRemoteCmd) closeConnection() {
 	if s.sshClient != nil {
 		if err := s.sshClient.Close(); err != nil {
-			logrus.Errorf("Failed to close ssh client: %s", err)
+			logger.Errorf("Failed to close ssh client: %s", err)
 		}
 	}
 }
