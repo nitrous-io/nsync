@@ -265,7 +265,7 @@ func (s *Sync) Start() {
 				logger.Errorf("Got error message from remote watcher: %+v", err)
 				if s.remoteWatcherRetryCount < maxRemoteWatcherRetry || !s.IsStopped() {
 					time.Sleep(retryInterval)
-					go s.startRemoteWatcher(remoteChan, errorChan, s.stopCh)
+					go s.startRemoteWatcher(remoteChan, errorChan, s.stopRemoteCh)
 					s.remoteWatcherRetryCount++
 					logger.Infof("Retrying to connect to server: %d", s.remoteWatcherRetryCount)
 				} else {
@@ -302,6 +302,7 @@ func (s *Sync) CreateLocalFolderIfAbsent() error {
 
 func (s *Sync) performSync() {
 	logger.Debug("sync: Begin...")
+
 	err := s.parseSyncIgnore()
 	if err != nil {
 		// Only returns error since we can still sync with previous value or empty value.
@@ -546,10 +547,12 @@ func (s *Sync) Stop() {
 
 	if s.stopRemoteCh != nil {
 		s.stopRemoteCh <- struct{}{}
+		<-s.stopRemoteCh
 	}
 
 	if s.stopUnisonCh != nil {
 		s.stopUnisonCh <- struct{}{}
+		<-s.stopUnisonCh
 	}
 	s.publishMessage("container.sync-disabled", nil)
 }
@@ -567,10 +570,12 @@ func (s *Sync) StopWithError(err error) {
 
 	if s.stopRemoteCh != nil {
 		s.stopRemoteCh <- struct{}{}
+		<-s.stopRemoteCh
 	}
 
 	if s.stopUnisonCh != nil {
 		s.stopUnisonCh <- struct{}{}
+		<-s.stopUnisonCh
 	}
 	s.publishMessage("container.sync-disabled", err)
 }
