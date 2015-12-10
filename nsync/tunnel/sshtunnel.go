@@ -14,8 +14,7 @@ import (
 
 	"golang.org/x/crypto/ssh"
 
-	log "github.com/Sirupsen/logrus"
-	"github.com/nitrous-io/nsync/nsync/event"
+	"github.com/nitrous-io/nsync/pkg/logger"
 )
 
 const (
@@ -34,28 +33,26 @@ type SSHTunnel struct {
 	sshHost       string
 	sshConfig     *ssh.ClientConfig
 	ports         []int
-	event         *event.Event
 
 	listeners []net.Listener
 }
 
-func NewSSHTunnel(containerSlug, sshHost string, sshConfig *ssh.ClientConfig, ports []int, event *event.Event) *SSHTunnel {
+func NewSSHTunnel(containerSlug, sshHost string, sshConfig *ssh.ClientConfig, ports []int) *SSHTunnel {
 	sshTunnel := &SSHTunnel{}
 	sshTunnel.containerSlug = containerSlug
 	sshTunnel.sshHost = sshHost
 	sshTunnel.sshConfig = sshConfig
 	sshTunnel.ports = ports
-	sshTunnel.event = event
 
 	return sshTunnel
 }
 
 func (st *SSHTunnel) Start() error {
-	log.Infof("Start forwarding: %+v", st.ports)
+	logger.Infof("Start forwarding: %+v", st.ports)
 
 	sshClient, err := ssh.Dial("tcp", st.sshHost, st.sshConfig)
 	if err != nil {
-		log.Errorf("Failed to ssh.Dial: %v", err)
+		logger.Errorf("Failed to ssh.Dial: %v", err)
 		return err
 	}
 
@@ -65,7 +62,7 @@ func (st *SSHTunnel) Start() error {
 		listener, err := net.Listen("tcp", address)
 		if err != nil {
 			st.stop()
-			log.Errorf("Failed to listen to %d: %v", port, err)
+			logger.Errorf("Failed to listen to %d: %v", port, err)
 			if err.(*net.OpError).Err.(*os.SyscallError).Err == syscall.EADDRINUSE {
 				return fmt.Errorf("Port %d is in use", port)
 			}
@@ -78,14 +75,14 @@ func (st *SSHTunnel) Start() error {
 			for {
 				localConn, err := listener.Accept()
 				if err != nil {
-					log.Errorf("Failed to listen.Accept failed: %s", err)
+					logger.Errorf("Failed to listen.Accept failed: %s", err)
 					st.stop()
 					return
 				}
 
 				stream, err := sshClient.Dial("tcp", address)
 				if err != nil {
-					log.Errorf("Failed to sshClientConn.Dial with %s failed: %s", address, err)
+					logger.Errorf("Failed to sshClientConn.Dial with %s failed: %s", address, err)
 					st.stop()
 					return
 				}
@@ -202,12 +199,12 @@ func (st *SSHTunnel) portToString() string {
 }
 
 func (st *SSHTunnel) publishStartEvent() {
-	st.event.Send("container.started-port-forwarding", map[string]string{
+	logger.Event("container.started-port-forwarding", map[string]string{
 		"slug":  st.containerSlug,
 		"ports": st.portToString(),
 	})
 
-	log.Debugf("Published container.started-port-forwarding event with %+v", st)
+	logger.Debugf("Published container.started-port-forwarding event with %+v", st)
 }
 
 func (st *SSHTunnel) publishStopEvent(err error) {
@@ -220,6 +217,6 @@ func (st *SSHTunnel) publishStopEvent(err error) {
 		message["error"] = err.Error()
 	}
 
-	st.event.Send("container.stopped-port-forwarding", message)
-	log.Debugf("Published container.stopped-port-forwarding event with %+v: %s", st, err)
+	logger.Event("container.stopped-port-forwarding", message)
+	logger.Debugf("Published container.stopped-port-forwarding event with %+v: %s", st, err)
 }

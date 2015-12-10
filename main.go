@@ -6,16 +6,13 @@ import (
 	"os/signal"
 	"syscall"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/nitrous-io/nsync/nsync"
+	"github.com/nitrous-io/nsync/pkg/logger"
 )
 
-func init() {
-	log.SetLevel(log.DebugLevel)
-}
-
 func main() {
-	log.Infof("Nsync pid: %d", os.Getpid())
+	go logger.Start()
+	logger.Infof("Nsync pid: %d", os.Getpid())
 
 	stopCh := make(chan struct{})
 	server := nsync.NewServer(stopCh)
@@ -37,14 +34,14 @@ func catchSignal(c chan<- struct{}) {
 
 	s := <-sigChan
 
-	log.Debugf("Caught signal: %s", s)
+	logger.Debugf("Caught signal: %s", s)
 	c <- struct{}{}
 }
 
 func catchStdinClosure(c chan<- struct{}) {
 	_, err := ioutil.ReadAll(os.Stdin)
 	if err != nil {
-		log.Fatal(err)
+		logger.Fatal(err)
 	}
 	// no error means EOF read
 	c <- struct{}{}

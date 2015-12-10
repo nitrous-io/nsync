@@ -14,11 +14,10 @@ import (
 
 	"golang.org/x/crypto/ssh"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/kardianos/osext"
-	"github.com/nitrous-io/nsync/nsync/event"
 	"github.com/nitrous-io/nsync/nsync/nitrousapi"
 	"github.com/nitrous-io/nsync/pkg/envmap"
+	"github.com/nitrous-io/nsync/pkg/logger"
 	"github.com/nitrous-io/nsync/pkg/pathmatch"
 	"github.com/nitrous-io/nsync/pkg/shortname"
 	"github.com/nitrous-io/nsync/pkg/sshconfig"
@@ -53,10 +52,10 @@ func init() {
 		sshExeSymlinkPath := filepath.Join(tempFolderPath, "nsync-ssh")
 		if _, err := os.Stat(sshExeSymlinkPath); os.IsNotExist(err) {
 			if err := os.Symlink(sshExeRealPath, sshExeSymlinkPath); err != nil {
-				log.Panicf("Failed to create symlink of nitrous-ssh: %+v", err)
+				logger.Panicf("Failed to create symlink of nitrous-ssh: %+v", err)
 			}
 		} else if err != nil {
-			log.Panicf("Failed to get stats of nitrous-ssh symlink: %+v", err)
+			logger.Panicf("Failed to get stats of nitrous-ssh symlink: %+v", err)
 		}
 
 		sshExePath = sshExeSymlinkPath
@@ -73,14 +72,14 @@ func init() {
 		var err error
 		unisonExePath, err = shortname.Get(filepath.Join(exeFolderPath, "nitrous-unison.exe"))
 		if err != nil {
-			log.Panicf("Failed to genereate unison exec path: %+v", err)
+			logger.Panicf("Failed to genereate unison exec path: %+v", err)
 		}
 		sshExePath, err = shortname.Get(filepath.Join(exeFolderPath, "nsync-ssh.exe"))
 		if err != nil {
-			log.Panicf("Failed to genereate ssh exec path: %+v", err)
+			logger.Panicf("Failed to genereate ssh exec path: %+v", err)
 		}
 	} else {
-		log.Panicf("Unsupported platform: %s-%s!", runtime.GOOS, runtime.GOARCH)
+		logger.Panicf("Unsupported platform: %s-%s!", runtime.GOOS, runtime.GOARCH)
 	}
 
 	for i, p := range ignorePathList {
@@ -90,7 +89,7 @@ func init() {
 
 func mustString(s string, err error) string {
 	if err != nil {
-		log.Panic(err)
+		logger.Panic(err)
 	}
 	return s
 }
@@ -105,7 +104,6 @@ type Sync struct {
 	sshKeyPath        string
 	localPath         string
 	pubKey            string
-	event             *event.Event
 
 	sshUrl   string
 	hostSlug string
@@ -135,7 +133,7 @@ type Sync struct {
 	stopUnisonCh chan struct{}
 }
 
-func NewSync(nitrousAPI *nitrousapi.NitrousAPI, token, sshKeyPath, nitrousFolderPath, containerSlug, remotePath, pubKey string, event *event.Event) *Sync {
+func NewSync(nitrousAPI *nitrousapi.NitrousAPI, token, sshKeyPath, nitrousFolderPath, containerSlug, remotePath, pubKey string) *Sync {
 	s := &Sync{
 		nitrousAPI:        nitrousAPI,
 		token:             token,
@@ -144,27 +142,26 @@ func NewSync(nitrousAPI *nitrousapi.NitrousAPI, token, sshKeyPath, nitrousFolder
 		containerSlug:     containerSlug,
 		remotePath:        remotePath,
 		pubKey:            pubKey,
-		event:             event,
 		state:             "created",
 	}
 
 	if err := nitrousAPI.UploadPublicKey(s.containerSlug, s.pubKey); err != nil {
-		log.Panicf("sync: Failed upload ssh key: %+v ", err)
+		logger.Panicf("sync: Failed upload ssh key: %+v ", err)
 	}
 
 	hostId, sshUrl, err := nitrousAPI.GetContainerInfo(s.containerSlug)
 	if err != nil {
-		log.Panicf("Failed to get container info: %+v", err)
+		logger.Panicf("Failed to get container info: %+v", err)
 	}
-	log.Debug("host id obtained: ", hostId)
-	log.Debug("SSH URL obtained: ", sshUrl)
+	logger.Debug("host id obtained: ", hostId)
+	logger.Debug("SSH URL obtained: ", sshUrl)
 	s.sshUrl = sshUrl
 
 	hostSlug, _, err := nitrousAPI.GetHostInfo(hostId)
 	if err != nil {
-		log.Panicf("Failed to get host info: %+v", err)
+		logger.Panicf("Failed to get host info: %+v", err)
 	}
-	log.Debug("host slug obtained: ", hostSlug)
+	logger.Debug("host slug obtained: ", hostSlug)
 
 	s.hostSlug = hostSlug
 	s.localPath = filepath.Join(s.nitrousFolderPath, s.hostSlug, s.containerSlug)
@@ -210,13 +207,13 @@ func (s *Sync) Start() {
 	var timer *time.Timer
 	handleChange := func(changedPath string, local bool) {
 		if !pathmatch.PathMatchAny(changedPath, append(ignoreList, ignorePathList...)...) {
-			log.Debug("changed path ")
+			logger.Debug("changed path ")
 			if local {
-				log.Debug("(local): ")
+				logger.Debug("(local): ")
 			} else {
-				log.Debug("(remote): ")
+				logger.Debug("(remote): ")
 			}
-			log.Debug(changedPath)
+			logger.Debug(changedPath)
 
 			if timer != nil {
 				timer.Reset(fileSyncDelay)
@@ -226,11 +223,11 @@ func (s *Sync) Start() {
 		}
 	}
 
-	log.Debugf("Watching %s/%s...", s.sshUrl, s.remotePath)
+	logger.Debugf("Watching %s/%s...", s.sshUrl, s.remotePath)
 	s.stopRemoteCh = make(chan struct{})
 	go s.startRemoteWatcher(remoteChan, errorChan, s.stopRemoteCh)
 
-	log.Debugf("Watching %s...", s.localPath)
+	logger.Debugf("Watching %s...", s.localPath)
 	if err := notify.Watch(filepath.Join(s.localPath, "..."), notifyChan, notify.All); err != nil {
 		s.errorCh <- err
 	}
@@ -247,14 +244,14 @@ func (s *Sync) Start() {
 			}
 		case err := <-s.errorCh: // local file sync error
 			{
-				log.Errorf("Local watcher is terminated: %+v", err)
+				logger.Errorf("Local watcher is terminated: %+v", err)
 				s.setState("stopped")
 				return
 			}
 		case change := <-remoteChan: // remote file system change
 			{
 				if s.remoteWatcherRetryCount != 0 {
-					log.Debugf("Remote watcher remote count is reset with %s", change)
+					logger.Debugf("Remote watcher remote count is reset with %s", change)
 					s.remoteWatcherRetryCount = 0 // reset the counter
 				}
 
@@ -265,21 +262,21 @@ func (s *Sync) Start() {
 			}
 		case err := <-errorChan: // remote watcher error
 			{
-				log.Errorf("Got error message from remote watcher: %+v", err)
+				logger.Errorf("Got error message from remote watcher: %+v", err)
 				if s.remoteWatcherRetryCount < maxRemoteWatcherRetry || !s.IsStopped() {
 					time.Sleep(retryInterval)
 					go s.startRemoteWatcher(remoteChan, errorChan, s.stopCh)
 					s.remoteWatcherRetryCount++
-					log.Infof("Retrying to connect to server: %d", s.remoteWatcherRetryCount)
+					logger.Infof("Retrying to connect to server: %d", s.remoteWatcherRetryCount)
 				} else {
-					log.Info("It reached limit of retrying. Stopping sync")
+					logger.Info("It reached limit of retrying. Stopping sync")
 					s.setState("stopped")
 					return
 				}
 			}
 		case <-s.stopCh: // stop event from main process
 			{
-				log.Infof("s.stopCh got message")
+				logger.Infof("s.stopCh got message")
 				s.setState("stopped")
 				return
 			}
@@ -304,11 +301,11 @@ func (s *Sync) CreateLocalFolderIfAbsent() error {
 }
 
 func (s *Sync) performSync() {
-	log.Debug("sync: Begin...")
+	logger.Debug("sync: Begin...")
 	err := s.parseSyncIgnore()
 	if err != nil {
 		// Only returns error since we can still sync with previous value or empty value.
-		log.Warnf("sync: Failed to parse .syncignore: %+v", err)
+		logger.Warnf("sync: Failed to parse .syncignore: %+v", err)
 	}
 
 	s.lastError = nil
@@ -320,7 +317,7 @@ func (s *Sync) performSync() {
 
 	cmd, err := s.unisonCmd()
 	if err != nil {
-		log.Errorf("sync: Failed to compile unison command options: %s", err)
+		logger.Errorf("sync: Failed to compile unison command options: %s", err)
 		s.lastError = err
 	}
 
@@ -337,13 +334,13 @@ func (s *Sync) performSync() {
 
 	select {
 	case outStr := <-output:
-		log.Debugf("sync: Output from unison: %s", outStr)
+		logger.Debugf("sync: Output from unison: %s", outStr)
 		s.handleOutput(outStr)
 	case err := <-errCh:
-		log.Errorf("sync: Failed to run unison: %s", err)
+		logger.Errorf("sync: Failed to run unison: %s", err)
 		s.lastError = err
 	case <-s.stopUnisonCh:
-		log.Infof("sync: Killing unison")
+		logger.Infof("sync: Killing unison")
 		cmd.Process.Kill()
 		return
 	}
@@ -352,16 +349,16 @@ func (s *Sync) performSync() {
 	s.stopUnisonCh = nil
 
 	if s.lastError != nil {
-		log.Errorf("sync: Error occurred: %v", s.lastError)
+		logger.Errorf("sync: Error occurred: %v", s.lastError)
 
 		if s.lastError == ErrSSHAccessDenied {
 			if err := s.nitrousAPI.UploadPublicKey(s.containerSlug, s.pubKey); err != nil {
-				log.Panicf("sync: Failed upload ssh key: %+v ", err)
+				logger.Panicf("sync: Failed upload ssh key: %+v ", err)
 			}
 		}
 
 		if s.errorIsFatal {
-			log.Fatal("Error is fatal!: %s", s.lastError)
+			logger.Fatal("Error is fatal!: %s", s.lastError)
 			s.errorCh <- s.lastError
 			return
 		}
@@ -371,19 +368,19 @@ func (s *Sync) performSync() {
 				return
 			}
 
-			log.Info("sync: Retrying...")
+			logger.Info("sync: Retrying...")
 			s.performSync()
 		})
 	}
 
 	if s.lastTransferCount != -1 {
-		log.Infof("sync: %d files transferred.", s.lastTransferCount)
+		logger.Infof("sync: %d files transferred.", s.lastTransferCount)
 	}
 
-	log.Debug("Sync end!")
+	logger.Debug("Sync end!")
 
 	if s.dirty {
-		log.Debug("changes happened while syncing, syncing again...")
+		logger.Debug("changes happened while syncing, syncing again...")
 		s.performSync()
 	}
 }
@@ -438,7 +435,7 @@ func (s *Sync) unisonCmd() (*exec.Cmd, error) {
 		}
 	}
 
-	log.Debugf("%s %s", unisonExePath, strings.Join(args, " "))
+	logger.Debugf("%s %s", unisonExePath, strings.Join(args, " "))
 
 	cmd := exec.Command(unisonExePath, args...)
 
@@ -501,7 +498,7 @@ func (s *Sync) UploadSyncIgnore() error {
 		}
 		defer f.Close()
 
-		log.Debug("Downloading .syncignore...")
+		logger.Debug("Downloading .syncignore...")
 		content, err := ioutil.ReadAll(f)
 		if err != nil {
 			return err
@@ -529,9 +526,9 @@ func (s *Sync) parseSyncIgnore() error {
 		}
 		s.syncIgnoreList = append(s.syncIgnoreList, syncIgnoreList...)
 	} else if err != nil && os.IsNotExist(err) {
-		log.Infof(".syncignore not found: %+v", err)
+		logger.Infof(".syncignore not found: %+v", err)
 	} else {
-		log.Errorf("Error on check stat of .syncignore: %+v", err)
+		logger.Errorf("Error on check stat of .syncignore: %+v", err)
 	}
 	return nil
 }
@@ -595,14 +592,10 @@ func (s *Sync) publishMessage(title string, err error) {
 		message["error"] = err.Error()
 	}
 
-	if err := s.event.Send(title, message); err != nil {
-		log.Infof("Failed to publish message %s: %s", title, message, err)
-		return
-	}
-
+	logger.Event(title, message)
 	if err != nil {
-		log.Infof("Published message %s with %+v: %s", title, message, err)
+		logger.Infof("Published message %s with %+v: %s", title, message, err)
 	} else {
-		log.Infof("Published message %s with %+v", title, message)
+		logger.Infof("Published message %s with %+v", title, message)
 	}
 }

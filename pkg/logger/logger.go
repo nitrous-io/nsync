@@ -13,13 +13,13 @@ func Start() {
 	for {
 		select {
 		case msg := <-ch:
-			fmt.Fprint(os.Stdout, msg)
+			fmt.Fprintln(os.Stdout, msg)
 		}
 	}
 }
 
 func send(msgType string, a ...interface{}) {
-	ch <- fmt.Sprintf(fmt.Sprintf("[nsync %s]", msgType), a...)
+	ch <- fmt.Sprint(append([]interface{}{fmt.Sprintf("[nsync %s] ", msgType)}, a...)...)
 }
 
 func sendf(msgType, format string, a ...interface{}) {
@@ -59,7 +59,7 @@ func Debugf(format string, a ...interface{}) {
 }
 
 func Fatal(a ...interface{}) {
-	log.Fatal(append([]interface{}{"[nsync fatal]"}, a...))
+	log.Fatal(append([]interface{}{"[nsync fatal] "}, a...))
 }
 
 func Fatalf(format string, a ...interface{}) {
@@ -67,7 +67,7 @@ func Fatalf(format string, a ...interface{}) {
 }
 
 func Panic(a ...interface{}) {
-	log.Panic(append([]interface{}{"[nsync panic]"}, a...))
+	log.Panic(append([]interface{}{"[nsync panic] "}, a...))
 }
 
 func Panicf(format string, a ...interface{}) {

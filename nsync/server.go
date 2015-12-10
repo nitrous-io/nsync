@@ -12,16 +12,13 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
-	"time"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/gorilla/mux"
-	"github.com/gorilla/websocket"
-	"github.com/nitrous-io/nsync/nsync/event"
 	"github.com/nitrous-io/nsync/nsync/nitrousapi"
 	filesync "github.com/nitrous-io/nsync/nsync/sync"
 	"github.com/nitrous-io/nsync/nsync/tunnel"
 	"github.com/nitrous-io/nsync/pkg/httpserver"
+	"github.com/nitrous-io/nsync/pkg/logger"
 	"github.com/nitrous-io/nsync/pkg/sshconfig"
 )
 
@@ -30,24 +27,6 @@ const MAX_PORT = 65535
 const DEFAULT_NITROUS_HOST = "https://www.nitrous.io"
 
 var (
-	upgrader = websocket.Upgrader{
-		ReadBufferSize:  4096,
-		WriteBufferSize: 4096,
-		Error: func(w http.ResponseWriter, r *http.Request, status int, reason error) {
-			log.Errorf("ws error: (%d) %s", status, reason)
-		},
-		CheckOrigin: func(r *http.Request) bool {
-			return true
-		},
-	}
-
-	// Time allowed to write a message to the peer.
-	writeWait = 1 * time.Second
-	// Time allowed to read the next pong message from the peer.
-	pongWait = 5 * time.Second
-	// Send pings to peer with this period. Must be less than pongWait.
-	pingPeriod = (pongWait * 9) / 10
-
 	errNoAvailablePorts     = errors.New("Could't find free port")
 	errInvalidPortsArgument = errors.New("Given ports parameter is invalid")
 	errInvalidRequest       = errors.New("token is invalid")
@@ -69,7 +48,6 @@ type Server struct {
 	syncClients      map[string]*filesync.Sync
 
 	message chan []byte
-	event   *event.Event
 
 	router *mux.Router
 }
@@ -135,11 +113,11 @@ func (s *Server) startPortForwarding(w http.ResponseWriter, r *http.Request) {
 	}
 
 	containerSlug := mux.Vars(r)["slug"]
-	log.Debugf("Start port forwarding for container %s", containerSlug)
+	logger.Debugf("Start port forwarding for container %s", containerSlug)
 
 	portsInStr := r.FormValue("ports")
 	if portsInStr == "" {
-		log.Errorf("Failed port forwarding for container: %s, err: port is not provided", containerSlug)
+		logger.Errorf("Failed port forwarding for container: %s, err: port is not provided", containerSlug)
 		w.WriteHeader(http.StatusForbidden)
 		w.Write([]byte(`{"error": "arguments are not sufficient"}`))
 		return
@@ -147,7 +125,7 @@ func (s *Server) startPortForwarding(w http.ResponseWriter, r *http.Request) {
 
 	ports, err := tunnel.ParsePort(portsInStr)
 	if err != nil {
-		log.Errorf("Failed port forwarding for container: %s, err: %s", containerSlug, err)
+		logger.Errorf("Failed port forwarding for container: %s, err: %s", containerSlug, err)
 		w.WriteHeader(http.StatusForbidden)
 		w.Write([]byte(`{"error": "invalid ports"}`))
 		return
@@ -155,29 +133,29 @@ func (s *Server) startPortForwarding(w http.ResponseWriter, r *http.Request) {
 
 	_, sshUrl, err := s.nitrousAPI.GetContainerInfo(containerSlug)
 	if err != nil {
-		log.Errorf("Failed port forwarding for container: %s, err: %s", containerSlug, err)
+		logger.Errorf("Failed port forwarding for container: %s, err: %s", containerSlug, err)
 		w.WriteHeader(http.StatusInternalServerError)
 		w.Write([]byte(`{"error": "failed to get container info"}`))
 		return
 	}
 
 	if client, ok := s.sshTunnelClients[containerSlug]; ok && client != nil {
-		log.Warnf("Port forwarding was enabled. Restarting.")
+		logger.Warnf("Port forwarding was enabled. Restarting.")
 		client.Stop()
 		s.sshTunnelClients[containerSlug] = nil
 	}
 
 	host, config, err := sshconfig.Config(sshUrl, s.sshKeyPath)
 	if err != nil {
-		log.Errorf("Failed port forwarding for container: %s, err: %s", containerSlug, err)
+		logger.Errorf("Failed port forwarding for container: %s, err: %s", containerSlug, err)
 		w.WriteHeader(http.StatusInternalServerError)
 		w.Write([]byte(`{"error": "failed to get ssh config"}`))
 		return
 	}
 
-	s.sshTunnelClients[containerSlug] = tunnel.NewSSHTunnel(containerSlug, host, config, ports, s.event)
+	s.sshTunnelClients[containerSlug] = tunnel.NewSSHTunnel(containerSlug, host, config, ports)
 	if err := s.sshTunnelClients[containerSlug].Start(); err != nil {
-		log.Errorf("Failed port forwarding for container: %s, err: %s", containerSlug, err)
+		logger.Errorf("Failed port forwarding for container: %s, err: %s", containerSlug, err)
 		w.WriteHeader(http.StatusInternalServerError)
 		w.Write([]byte(`{"error": "failed to start port forwarding"}`))
 		return
@@ -195,7 +173,7 @@ func (s *Server) stopPortForwarding(w http.ResponseWriter, r *http.Request) {
 	}
 
 	containerSlug := mux.Vars(r)["slug"]
-	log.Debugf("Stop port forwarding for container %s", containerSlug)
+	logger.Debugf("Stop port forwarding for container %s", containerSlug)
 
 	if client, ok := s.sshTunnelClients[containerSlug]; ok && client != nil {
 		client.Stop()
@@ -214,7 +192,7 @@ func (s *Server) startSync(w http.ResponseWriter, r *http.Request) {
 	}
 
 	containerSlug := mux.Vars(r)["slug"]
-	log.Debugf("Start syncing for container %s", containerSlug)
+	logger.Debugf("Start syncing for container %s", containerSlug)
 
 	remotePath := r.FormValue("remote_path")
 	if remotePath == "" {
@@ -231,16 +209,16 @@ func (s *Server) startSync(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// TODO: Need to make mutex lock not to allow more than 1 sync running for the same container
-	syncClient := filesync.NewSync(s.nitrousAPI, s.token, s.sshKeyPath, s.nitrousPath, containerSlug, remotePath, s.pubKey, s.event)
+	syncClient := filesync.NewSync(s.nitrousAPI, s.token, s.sshKeyPath, s.nitrousPath, containerSlug, remotePath, s.pubKey)
 	if err := syncClient.CreateLocalFolderIfAbsent(); err != nil {
-		log.Errorf("Failed to create folder: %s", err)
+		logger.Errorf("Failed to create folder: %s", err)
 		w.WriteHeader(http.StatusInternalServerError)
 		w.Write([]byte(`{"error": "failed to create a folder for sync"}`))
 		return
 	}
 
 	if err := syncClient.UploadSyncIgnore(); err != nil {
-		log.Errorf("Failed to upload .syncignore: %s", err)
+		logger.Errorf("Failed to upload .syncignore: %s", err)
 		w.WriteHeader(http.StatusInternalServerError)
 		w.Write([]byte(`{"error": "failed to sync .sycnignore with remote"}`))
 		return
@@ -261,7 +239,7 @@ func (s *Server) stopSync(w http.ResponseWriter, r *http.Request) {
 	}
 
 	containerSlug := mux.Vars(r)["slug"]
-	log.Debugf("Stop syncing for container %s", containerSlug)
+	logger.Debugf("Stop syncing for container %s", containerSlug)
 
 	if client, ok := s.syncClients[containerSlug]; ok && client != nil {
 		client.Stop()
@@ -272,61 +250,12 @@ func (s *Server) stopSync(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(`{"status": "OK"}`))
 }
 
-func (s *Server) subscribe(w http.ResponseWriter, r *http.Request) {
-	log.Debugf("subscribe event")
-
-	conn, err := upgrader.Upgrade(w, r, nil)
-	if err != nil {
-		log.Errorf("Upgrade failed: %s", err)
-		return
-	}
-
-	go s.writePump(conn)
-}
-
-func (s *Server) writePump(conn *websocket.Conn) {
-	ticker := time.NewTicker(pingPeriod)
-
-	defer func() {
-		ticker.Stop()
-		conn.Close()
-	}()
-
-	for {
-		select {
-		case message, ok := <-s.event.MsgCh:
-			log.Debugf("sending message: %+v.", string(message))
-			if ok {
-				if err := s.writeToConn(conn, websocket.TextMessage, message); err != nil {
-					log.Errorf("Failed to send message: %+v %+v", message, err)
-					return
-				}
-			} else {
-				log.Warnf("Got empty message")
-			}
-		case <-ticker.C:
-			if err := s.writeToConn(conn, websocket.TextMessage, []byte("h")); err != nil {
-				log.Errorf("Failed to ping: %+v", err)
-				return
-			}
-		}
-	}
-}
-
-func (s *Server) writeToConn(conn *websocket.Conn, mt int, payload []byte) error {
-	if err := conn.SetWriteDeadline(time.Now().Add(writeWait)); err != nil {
-		log.Errorf("Failed on conn.SetWriteDeadline: %s", err)
-	}
-	return conn.WriteMessage(mt, payload)
-}
-
 func NewServer(stopCh chan struct{}) *Server {
 	server := &Server{}
 	server.stopCh = stopCh
 	server.port = START_PORT
 	server.sshTunnelClients = make(map[string]*tunnel.SSHTunnel)
 	server.syncClients = make(map[string]*filesync.Sync)
-	server.event = event.NewEvent(messageCapacity)
 
 	r := mux.NewRouter()
 	r.HandleFunc("/ping", server.ping).Methods("GET")
@@ -335,7 +264,6 @@ func NewServer(stopCh chan struct{}) *Server {
 	r.HandleFunc("/containers/{slug}/tunnel/stop", server.stopPortForwarding).Methods("POST")
 	r.HandleFunc("/containers/{slug}/sync/start", server.startSync).Methods("POST")
 	r.HandleFunc("/containers/{slug}/sync/stop", server.stopSync).Methods("POST")
-	r.HandleFunc("/subscribe", server.subscribe).Methods("GET")
 	r.HandleFunc("/debug/pprof/{path:.*}", pprof.Index)
 
 	server.router = r
@@ -343,7 +271,7 @@ func NewServer(stopCh chan struct{}) *Server {
 }
 
 func (s *Server) Start() {
-	log.Debug("starting server")
+	logger.Debug("starting server")
 
 	errCh := make(chan error)
 	server := &http.Server{
@@ -362,7 +290,7 @@ func (s *Server) Start() {
 			if err != nil && err.(*net.OpError).Err.(*os.SyscallError).Err == syscall.EADDRINUSE {
 				// port is taken, try another port
 				server.Addr = fmt.Sprintf("127.0.0.1:%d", s.port)
-				log.Infof("Port is in use. trying with %d", s.port)
+				logger.Infof("Port is in use. trying with %d", s.port)
 				s.port += 1
 				if s.port > MAX_PORT {
 					errCh <- errNoAvailablePorts
@@ -370,27 +298,27 @@ func (s *Server) Start() {
 				}
 				continue
 			} else if err != nil {
-				log.Errorf("failed to listen due to: %+v", err)
+				logger.Errorf("failed to listen due to: %+v", err)
 				errCh <- err
 				return
 			}
 			break
 		}
 
-		log.Infof("Nsync ready at port %d", s.port)
+		logger.Infof("Nsync ready at port %d", s.port)
 		if err := httpserver.Serve(server, listener); err != nil {
-			log.Errorf("server is stopped due to: %+v", err)
+			logger.Errorf("server is stopped due to: %+v", err)
 			errCh <- err
 		}
 	}()
 
 	select {
 	case <-s.stopCh:
-		log.Info("stopping server....")
+		logger.Info("stopping server....")
 		s.stopAll()
 		s.stopCh <- struct{}{}
 	case err := <-errCh:
-		log.Errorf("got error: %+v", err)
+		logger.Errorf("got error: %+v", err)
 	}
 }
 
@@ -414,7 +342,7 @@ func parsePorts(str string) ([]int, error) {
 }
 
 func (s *Server) stopAll() {
-	log.Infof("Stopping all exisitng sync(%d) / tunneling(%d)", len(s.syncClients), len(s.sshTunnelClients))
+	logger.Infof("Stopping all exisitng sync(%d) / tunneling(%d)", len(s.syncClients), len(s.sshTunnelClients))
 	for _, client := range s.syncClients {
 		if client != nil && !client.IsStopped() {
 			client.Stop()
