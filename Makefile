@@ -28,6 +28,11 @@ linux:
 	GOARCH=amd64 GOOS=linux go build -v -o dist/lin64/nsync
 	GOARCH=amd64 GOOS=linux go build -v -o dist/lin64/nsync-ssh nitrous-ssh/nitrous-ssh.go
 
+watcher:
+	@mkdir -p dist/
+	@echo "$(OK_COLOR)--> Compiling watcher...$(NO_COLOR)"
+	GOARCH=amd64 GOOS=linux go build -v -o dist/nitrous-watcher nitrous-watcher/nitrous-watcher.go
+
 deps:
 	GO15VENDOREXPERIMENT=1 go get -d -v ./...
 
