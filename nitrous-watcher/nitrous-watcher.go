@@ -12,7 +12,7 @@ import (
 	"strings"
 	"syscall"
 
-	"code.google.com/p/go.exp/inotify"
+	"golang.org/x/exp/inotify"
 )
 
 var (
