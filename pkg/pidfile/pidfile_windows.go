@@ -5,8 +5,6 @@ package pidfile
 
 import (
 	"os"
-
-	"github.com/Sirupsen/logrus"
 )
 
 type LockFile struct {
@@ -27,6 +25,5 @@ func NewLockFile(name string, perm os.FileMode) (*LockFile, error) {
 
 // Remove removes lock, closes and removes an open file.
 func (file *LockFile) Remove() error {
-	logrus.Infof("Removing: %s", file.name)
 	return os.Remove(file.name)
 }
