@@ -11,12 +11,13 @@ import (
 )
 
 type NitrousAPI struct {
-	token string
-	host  string
+	token      string
+	host       string
+	httpClient *http.Client
 }
 
 func NewNitrousAPI(token, host string) *NitrousAPI {
-	return &NitrousAPI{token: token, host: host}
+	return &NitrousAPI{token: token, host: host, httpClient: &http.Client{}}
 }
 
 func (na *NitrousAPI) GetUsername() (username string, err error) {
@@ -114,18 +115,18 @@ func (na *NitrousAPI) UploadPublicKey(containerSlug, pubKey string) error {
 }
 
 func (na *NitrousAPI) authedGet(url string) (res *http.Response, err error) {
-	return Get(na.host+url, map[string]string{
+	return na.Get(na.host+url, map[string]string{
 		"Authorization": "Bearer " + na.token,
 	})
 }
 
 func (na *NitrousAPI) authedPost(url string, params map[string]string) (res *http.Response, err error) {
-	return Post(na.host+url, map[string]string{
+	return na.Post(na.host+url, map[string]string{
 		"Authorization": "Bearer " + na.token,
 	}, params)
 }
 
-func Get(url string, headers map[string]string) (res *http.Response, err error) {
+func (na *NitrousAPI) Get(url string, headers map[string]string) (res *http.Response, err error) {
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return nil, err
@@ -133,10 +134,10 @@ func Get(url string, headers map[string]string) (res *http.Response, err error) 
 	for k, v := range headers {
 		req.Header.Add(k, v)
 	}
-	return http.DefaultClient.Do(req)
+	return na.httpClient.Do(req)
 }
 
-func Post(requestUrl string, headers map[string]string, params map[string]string) (res *http.Response, err error) {
+func (na *NitrousAPI) Post(requestUrl string, headers map[string]string, params map[string]string) (res *http.Response, err error) {
 	data := url.Values{}
 	for k, v := range params {
 		data.Set(k, v)
@@ -152,5 +153,5 @@ func Post(requestUrl string, headers map[string]string, params map[string]string
 		req.Header.Add(k, v)
 	}
 
-	return http.DefaultClient.Do(req)
+	return na.httpClient.Do(req)
 }
