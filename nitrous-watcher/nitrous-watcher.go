@@ -1,9 +1,11 @@
-// +build linux darwin
+// +build linux
+// +build amd64
 
 package main
 
 import (
 	"fmt"
+	"io/ioutil"
 	"os"
 	"os/signal"
 	"os/user"
@@ -12,6 +14,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/nitrous-io/nsync/pkg/logger"
 	"golang.org/x/exp/inotify"
 )
 
@@ -77,12 +80,19 @@ func main() {
 	}
 	recursivelyWatchDirectories(watcher, watchDir)
 
+	stopCh := make(chan struct{})
+	go catchStdinClosure(stopCh)
+
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt, os.Kill, syscall.SIGTERM)
 	go func() {
-		for _ = range c {
+		select {
+		case <-c:
 			watcher.Close()
 			os.Exit(0)
+		case <-stopCh:
+			watcher.Close()
+			os.Exit(1)
 		}
 	}()
 
@@ -122,4 +132,13 @@ func main() {
 			fmt.Printf("Change(%s): %s\n", evName, path)
 		}
 	}
+}
+
+func catchStdinClosure(c chan<- struct{}) {
+	_, err := ioutil.ReadAll(os.Stdin)
+	if err != nil {
+		logger.Fatal(err)
+	}
+	// no error means EOF read
+	c <- struct{}{}
 }
