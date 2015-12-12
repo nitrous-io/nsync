@@ -45,6 +45,8 @@ var (
 const fileSyncDelay = 100 * time.Millisecond
 const maxRemoteWatcherRetry = 5
 const retryInterval = 5 * time.Second
+const remoteWatcherTerminateTimeout = 3 * time.Second
+const unisonTerminateTimeout = 3 * time.Second
 
 func init() {
 	createSymlinkIfNotExist := func() {
@@ -246,6 +248,8 @@ func (s *Sync) Start() {
 			{
 				logger.Errorf("Local watcher is terminated: %+v", err)
 				s.setState("stopped")
+				s.stopRemoteWatcher()
+				s.stopUnisonCmd()
 				return
 			}
 		case change := <-remoteChan: // remote file system change
@@ -263,14 +267,16 @@ func (s *Sync) Start() {
 		case err := <-errorChan: // remote watcher error
 			{
 				logger.Errorf("Got error message from remote watcher: %+v", err)
-				if s.remoteWatcherRetryCount < maxRemoteWatcherRetry || !s.IsStopped() {
+				if s.remoteWatcherRetryCount < maxRemoteWatcherRetry && !s.IsStopped() {
+					s.remoteWatcherRetryCount++
 					time.Sleep(retryInterval)
 					go s.startRemoteWatcher(remoteChan, errorChan, s.stopRemoteCh)
-					s.remoteWatcherRetryCount++
 					logger.Infof("Retrying to connect to server: %d", s.remoteWatcherRetryCount)
 				} else {
 					logger.Info("It reached limit of retrying. Stopping sync")
 					s.setState("stopped")
+					s.stopRemoteWatcher()
+					s.stopUnisonCmd()
 					return
 				}
 			}
@@ -541,19 +547,14 @@ func (s *Sync) Stop() {
 
 	s.setState("stopped")
 	s.dirty = false
+
+	s.stopRemoteWatcher()
+	s.stopUnisonCmd()
+
 	if s.stopCh != nil {
 		s.stopCh <- struct{}{}
 	}
 
-	if s.stopRemoteCh != nil {
-		s.stopRemoteCh <- struct{}{}
-		<-s.stopRemoteCh
-	}
-
-	if s.stopUnisonCh != nil {
-		s.stopUnisonCh <- struct{}{}
-		<-s.stopUnisonCh
-	}
 	s.publishMessage("container.sync-disabled", nil)
 }
 
@@ -564,20 +565,51 @@ func (s *Sync) StopWithError(err error) {
 
 	s.setState("stopped")
 	s.dirty = false
+
+	s.stopRemoteWatcher()
+	s.stopUnisonCmd()
+
 	if s.stopCh != nil {
 		s.stopCh <- struct{}{}
 	}
 
-	if s.stopRemoteCh != nil {
-		s.stopRemoteCh <- struct{}{}
-		<-s.stopRemoteCh
-	}
-
-	if s.stopUnisonCh != nil {
-		s.stopUnisonCh <- struct{}{}
-		<-s.stopUnisonCh
-	}
 	s.publishMessage("container.sync-disabled", err)
+}
+
+func (s *Sync) stopRemoteWatcher() {
+	if s.stopRemoteCh != nil {
+		done := make(chan struct{})
+		go func() {
+			s.stopRemoteCh <- struct{}{}
+			stopped := <-s.stopRemoteCh
+			done <- stopped
+		}()
+
+		select {
+		case <-done:
+			logger.Debugf("sucessfully stopped remote watcher")
+		case <-time.After(remoteWatcherTerminateTimeout):
+			logger.Errorf("timeout terminating remote watcher")
+		}
+	}
+}
+
+func (s *Sync) stopUnisonCmd() {
+	if s.stopUnisonCh != nil {
+		done := make(chan struct{})
+		go func() {
+			s.stopUnisonCh <- struct{}{}
+			stopped := <-s.stopUnisonCh
+			done <- stopped
+		}()
+
+		select {
+		case <-done:
+			logger.Debugf("sucessfully stopped unison")
+		case <-time.After(unisonTerminateTimeout):
+			logger.Errorf("timeout terminating unison")
+		}
+	}
 }
 
 func (s *Sync) setState(state string) {
