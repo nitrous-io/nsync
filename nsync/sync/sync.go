@@ -52,7 +52,7 @@ func init() {
 	createSymlinkIfNotExist := func() {
 		sshExeRealPath := filepath.Join(exeFolderPath, "nsync-ssh")
 		sshExeSymlinkPath := filepath.Join(tempFolderPath, "nsync-ssh")
-		if _, err := os.Stat(sshExeSymlinkPath); os.IsNotExist(err) {
+		if _, err := os.Lstat(sshExeSymlinkPath); os.IsNotExist(err) {
 			if err := os.Symlink(sshExeRealPath, sshExeSymlinkPath); err != nil {
 				logger.Panicf("Failed to create symlink of nitrous-ssh: %+v", err)
 			}
