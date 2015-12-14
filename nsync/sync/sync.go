@@ -52,14 +52,17 @@ func init() {
 	createSymlinkIfNotExist := func() {
 		sshExeRealPath := filepath.Join(exeFolderPath, "nsync-ssh")
 		sshExeSymlinkPath := filepath.Join(tempFolderPath, "nsync-ssh")
-		if _, err := os.Lstat(sshExeSymlinkPath); os.IsNotExist(err) {
-			if err := os.Symlink(sshExeRealPath, sshExeSymlinkPath); err != nil {
-				logger.Panicf("Failed to create symlink of nitrous-ssh: %+v", err)
+		if _, err := os.Lstat(sshExeSymlinkPath); err == nil {
+			if err := os.Remove(sshExeSymlinkPath); err != nil {
+				logger.Panicf("Failed to remote existing symlink: %+v", err)
 			}
-		} else if err != nil {
+		} else if err != nil && !os.IsNotExist(err) {
 			logger.Panicf("Failed to get stats of nitrous-ssh symlink: %+v", err)
 		}
 
+		if err := os.Symlink(sshExeRealPath, sshExeSymlinkPath); err != nil {
+			logger.Panicf("Failed to create symlink of nitrous-ssh: %+v", err)
+		}
 		sshExePath = sshExeSymlinkPath
 	}
 
