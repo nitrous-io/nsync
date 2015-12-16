@@ -65,6 +65,16 @@ var _ = Describe("nsync/nitrousapi", func() {
 			Expect(hostID).To(Equal(int64(1234)))
 			Expect(sshUrl).To(Equal("ssh://nitrous@nitrous.io"))
 		})
+
+		It("returns error when container is not running", func() {
+			httpServer, httpClient := runServerAndGetClient(`{"container": {"ssh_url":"ssh://nitrous@nitrous.io", "host_id": 1234, "state": "stopped"}}`, http.StatusOK)
+			defer httpServer.Close()
+
+			client.SetHttpClient(httpClient)
+
+			_, _, err := client.GetContainerInfo("container-slug")
+			Expect(err).To(HaveOccurred())
+		})
 	})
 
 	Describe("GetHostInfo", func() {

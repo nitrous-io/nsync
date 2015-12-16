@@ -138,7 +138,7 @@ type Sync struct {
 	stopUnisonCh chan struct{}
 }
 
-func NewSync(nitrousAPI *nitrousapi.NitrousAPI, token, sshKeyPath, nitrousFolderPath, containerSlug, remotePath, pubKey string) *Sync {
+func NewSync(nitrousAPI *nitrousapi.NitrousAPI, token, sshKeyPath, nitrousFolderPath, containerSlug, remotePath, pubKey string) (*Sync, error) {
 	s := &Sync{
 		nitrousAPI:        nitrousAPI,
 		token:             token,
@@ -151,13 +151,16 @@ func NewSync(nitrousAPI *nitrousapi.NitrousAPI, token, sshKeyPath, nitrousFolder
 	}
 
 	if err := nitrousAPI.UploadPublicKey(s.containerSlug, s.pubKey); err != nil {
-		logger.Panicf("sync: Failed upload ssh key: %+v ", err)
+		logger.Errorf("sync: Failed upload ssh key: %+v ", err)
+		return nil, err
 	}
 
 	hostId, sshUrl, err := nitrousAPI.GetContainerInfo(s.containerSlug)
 	if err != nil {
-		logger.Panicf("Failed to get container info: %+v", err)
+		logger.Errorf("Failed to get container info: %+v", err)
+		return nil, err
 	}
+
 	logger.Debug("host id obtained: ", hostId)
 	logger.Debug("SSH URL obtained: ", sshUrl)
 	s.sshUrl = sshUrl
@@ -173,7 +176,7 @@ func NewSync(nitrousAPI *nitrousapi.NitrousAPI, token, sshKeyPath, nitrousFolder
 
 	s.remoteWatcherRetryCount = 0
 
-	return s
+	return s, nil
 }
 
 func (s *Sync) Start() {

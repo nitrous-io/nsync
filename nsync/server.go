@@ -209,7 +209,14 @@ func (s *Server) startSync(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// TODO: Need to make mutex lock not to allow more than 1 sync running for the same container
-	syncClient := filesync.NewSync(s.nitrousAPI, s.token, s.sshKeyPath, s.nitrousPath, containerSlug, remotePath, s.pubKey)
+	syncClient, err := filesync.NewSync(s.nitrousAPI, s.token, s.sshKeyPath, s.nitrousPath, containerSlug, remotePath, s.pubKey)
+	if err != nil {
+		logger.Errorf("Failed to start sync: %s", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`{"error": "failed to start sync"}`))
+		return
+	}
+
 	if err := syncClient.CreateLocalFolderIfAbsent(); err != nil {
 		logger.Errorf("Failed to create folder: %s", err)
 		w.WriteHeader(http.StatusInternalServerError)

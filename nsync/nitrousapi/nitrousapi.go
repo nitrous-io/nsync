@@ -16,6 +16,8 @@ type NitrousAPI struct {
 	httpClient *http.Client
 }
 
+var ErrContainerNotRunning = errors.New("container is not running")
+
 func NewNitrousAPI(token, host string) *NitrousAPI {
 	return &NitrousAPI{token: token, host: host, httpClient: &http.Client{}}
 }
@@ -48,6 +50,12 @@ func (na *NitrousAPI) GetContainerInfo(containerSlug string) (hostId int64, sshU
 	json.NewDecoder(res.Body).Decode(&j)
 
 	if container, ok := j["container"].(map[string]interface{}); ok {
+		if v, ok := container["state"].(string); ok {
+			if v != "running" {
+				return 0, "", ErrContainerNotRunning
+			}
+		}
+
 		if v, ok := container["ssh_url"].(string); ok {
 			sshUrl = v
 		}
