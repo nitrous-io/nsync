@@ -81,7 +81,7 @@ func (s *Server) init(w http.ResponseWriter, r *http.Request) {
 		nitrousPath, err = getDefaultNitrousPath()
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
-			w.Write([]byte(`{"error": "failed to initalize"}`))
+			w.Write([]byte(`{"error": "failed to initialize"}`))
 			return
 		}
 	}

@@ -197,11 +197,14 @@ func (s *Sync) Start() {
 		s.syncingLock.Unlock()
 	}
 
-	s.errorCh = make(chan error)
-
 	s.performSync()
 	// When stopped while first syncing
 	if s.IsStopped() {
+		return
+	}
+
+	if s.lastError != nil && s.errorIsFatal {
+		logger.Errorf("Local watcher is terminated: %+v", s.lastError)
 		return
 	}
 
@@ -239,6 +242,8 @@ func (s *Sync) Start() {
 	defer notify.Stop(notifyChan)
 
 	s.publishMessage("container.sync-enabled", nil)
+
+	s.errorCh = make(chan error)
 	s.stopCh = make(chan struct{})
 
 	for {
@@ -367,9 +372,20 @@ func (s *Sync) performSync() {
 			}
 		}
 
+		// It fails to run unison command. So no way to handle output.
+		// This happens when sshcmd or sshargs are not valid.
+		if strings.Contains(s.lastError.Error(), "exit status 3") {
+			s.errorIsFatal = true
+		}
+
 		if s.errorIsFatal {
-			logger.Fatal("Error is fatal!: %s", s.lastError)
-			s.errorCh <- s.lastError
+			logger.Errorf("sync: error is fatal: %s", s.lastError)
+			// For the first sync, it does not wait for the channel.
+			// So it could hang here. Make the error channl nil,
+			// so that it does not hang for any fatal errors on first sync
+			if s.errorCh != nil {
+				s.errorCh <- s.lastError
+			}
 			return
 		}
 
