@@ -11,6 +11,10 @@ import (
 )
 
 func main() {
+	if os.Getenv("NSYNC_LOG_LEVEL") != "" {
+		logger.SetLogLevel(os.Getenv("NSYNC_LOG_LEVEL"))
+	}
+
 	go logger.Start()
 	logger.Event("pid", os.Getpid())
 

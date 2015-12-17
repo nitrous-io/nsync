@@ -7,7 +7,30 @@ import (
 	"os"
 )
 
+type Level uint8
+
+const (
+	ErrorLevel Level = iota
+	WarnLevel
+	InfoLevel
+	DebugLevel
+)
+
+var LogLevel = WarnLevel
 var ch = make(chan string, 1000)
+
+func SetLogLevel(l string) {
+	switch l {
+	case "error":
+		LogLevel = ErrorLevel
+	case "warn":
+		LogLevel = WarnLevel
+	case "info":
+		LogLevel = InfoLevel
+	case "debug":
+		LogLevel = DebugLevel
+	}
+}
 
 func Start() {
 	for {
@@ -27,35 +50,51 @@ func sendf(msgType, format string, a ...interface{}) {
 }
 
 func Info(a ...interface{}) {
-	send("info", a...)
+	if LogLevel >= InfoLevel {
+		send("info", a...)
+	}
 }
 
 func Infof(format string, a ...interface{}) {
-	sendf("info", format, a...)
+	if LogLevel >= InfoLevel {
+		sendf("info", format, a...)
+	}
 }
 
 func Warn(a ...interface{}) {
-	send("warn", a...)
+	if LogLevel >= WarnLevel {
+		send("warn", a...)
+	}
 }
 
 func Warnf(format string, a ...interface{}) {
-	sendf("warn", format, a...)
+	if LogLevel >= WarnLevel {
+		sendf("warn", format, a...)
+	}
 }
 
 func Error(a ...interface{}) {
-	send("error", a...)
+	if LogLevel >= ErrorLevel {
+		send("error", a...)
+	}
 }
 
 func Errorf(format string, a ...interface{}) {
-	sendf("error", format, a...)
+	if LogLevel >= ErrorLevel {
+		sendf("error", format, a...)
+	}
 }
 
 func Debug(a ...interface{}) {
-	send("debug", a...)
+	if LogLevel >= DebugLevel {
+		send("debug", a...)
+	}
 }
 
 func Debugf(format string, a ...interface{}) {
-	sendf("debug", format, a...)
+	if LogLevel >= DebugLevel {
+		sendf("debug", format, a...)
+	}
 }
 
 func Fatal(a ...interface{}) {
