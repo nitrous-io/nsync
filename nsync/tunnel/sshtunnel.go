@@ -18,7 +18,7 @@ import (
 )
 
 const (
-	minPort = 1000
+	minPort = 1024
 	maxPort = 65535
 )
 
@@ -35,6 +35,7 @@ type SSHTunnel struct {
 	ports         []int
 
 	listeners []net.Listener
+	state     string
 }
 
 func NewSSHTunnel(containerSlug, sshHost string, sshConfig *ssh.ClientConfig, ports []int) *SSHTunnel {
@@ -75,8 +76,10 @@ func (st *SSHTunnel) Start() error {
 			for {
 				localConn, err := listener.Accept()
 				if err != nil {
-					logger.Errorf("Failed to listen.Accept failed: %s", err)
-					st.stop()
+					if st.state != "stopped" {
+						logger.Errorf("Failed to listen.Accept failed: %s", err)
+						st.stop()
+					}
 					return
 				}
 
@@ -92,12 +95,14 @@ func (st *SSHTunnel) Start() error {
 		}()
 	}
 
+	st.state = "running"
 	st.publishStartEvent()
 	return nil
 }
 
 func (st *SSHTunnel) Stop() {
 	st.stop()
+	st.state = "stopped"
 	st.publishStopEvent(nil)
 }
 
@@ -218,5 +223,9 @@ func (st *SSHTunnel) publishStopEvent(err error) {
 	}
 
 	logger.Event("container.stopped-port-forwarding", message)
-	logger.Debugf("Published container.stopped-port-forwarding event with %+v: %s", st, err)
+	if err != nil {
+		logger.Debugf("Published container.stopped-port-forwarding event with %+v: %s", st, err)
+	} else {
+		logger.Debugf("Published container.stopped-port-forwarding event with %+v", st)
+	}
 }
