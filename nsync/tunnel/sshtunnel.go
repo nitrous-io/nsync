@@ -25,20 +25,26 @@ const (
 var (
 	ErrInvalidPortPattern = errors.New("Invalid port pattern")
 	ErrInvalidPortNumber  = errors.New("Port number is out of range")
-	portRangePattern      = regexp.MustCompile(`([0-9]+)(-([0-9]+))?`)
+	ErrPortConflicts      = errors.New("There is port number conflicts")
+	portRangePattern      = regexp.MustCompile(`([0-9]+)(-([0-9]+))?(:([0-9]+))?`)
 )
+
+type Port struct {
+	Local  int
+	Remote int
+}
 
 type SSHTunnel struct {
 	containerSlug string
 	sshHost       string
 	sshConfig     *ssh.ClientConfig
-	ports         []int
+	ports         []Port
 
 	listeners []net.Listener
 	state     string
 }
 
-func NewSSHTunnel(containerSlug, sshHost string, sshConfig *ssh.ClientConfig, ports []int) *SSHTunnel {
+func NewSSHTunnel(containerSlug, sshHost string, sshConfig *ssh.ClientConfig, ports []Port) *SSHTunnel {
 	sshTunnel := &SSHTunnel{}
 	sshTunnel.containerSlug = containerSlug
 	sshTunnel.sshHost = sshHost
@@ -59,8 +65,13 @@ func (st *SSHTunnel) Start() error {
 
 	for i := 0; i < len(st.ports); i++ {
 		port := st.ports[i]
-		address := fmt.Sprintf("127.0.0.1:%d", port)
-		listener, err := net.Listen("tcp", address)
+		localPort := port.Local
+		remotePort := port.Remote
+
+		localAddress := fmt.Sprintf("127.0.0.1:%d", localPort)
+		remoteAddress := fmt.Sprintf("127.0.0.1:%d", remotePort)
+
+		listener, err := net.Listen("tcp", localAddress)
 		if err != nil {
 			st.stop()
 			logger.Errorf("Failed to listen to %d: %v", port, err)
@@ -83,9 +94,9 @@ func (st *SSHTunnel) Start() error {
 					return
 				}
 
-				stream, err := sshClient.Dial("tcp", address)
+				stream, err := sshClient.Dial("tcp", remoteAddress)
 				if err != nil {
-					logger.Errorf("Failed to sshClientConn.Dial with %s failed: %s", address, err)
+					logger.Errorf("Failed to sshClientConn.Dial with %s failed: %s", remoteAddress, err)
 					st.stop()
 					return
 				}
@@ -136,57 +147,91 @@ func pipe(src io.ReadWriteCloser, dst io.ReadWriteCloser) {
 	<-c
 }
 
-func ParsePort(str string) ([]int, error) {
-	var ports []int
-	portsMap := make(map[int]struct{})
+func ParsePort(str string) ([]Port, error) {
+	var ports []Port
+	localPortMap := make(map[int]struct{})
+	remotePortMap := make(map[int]struct{})
 
-	insertPort := func(port int) {
-		if _, ok := portsMap[port]; ok {
-			return
+	insertPort := func(localPort int, remotePort int) error {
+		if _, ok := localPortMap[localPort]; ok {
+			return ErrPortConflicts
 		}
-		portsMap[port] = struct{}{}
+
+		if _, ok := remotePortMap[remotePort]; ok {
+			return ErrPortConflicts
+		}
+
+		localPortMap[localPort] = struct{}{}
+		remotePortMap[remotePort] = struct{}{}
+
+		port := Port{
+			Local:  localPort,
+			Remote: remotePort,
+		}
+
 		ports = append(ports, port)
+		return nil
+	}
+
+	validateAndConvertPort := func(portStr string) (int, error) {
+		port, err := strconv.Atoi(portStr)
+		if err != nil {
+			return 0, ErrInvalidPortPattern
+		}
+
+		if port < minPort || port > maxPort {
+			return 0, ErrInvalidPortNumber
+		}
+
+		return port, nil
 	}
 
 	portsInStr := strings.Split(str, ",")
 	for i := 0; i < len(portsInStr); i++ {
 		matches := portRangePattern.FindStringSubmatch(portsInStr[i])
-		if len(matches) != 4 {
+		if len(matches) != 6 {
 			return nil, ErrInvalidPortPattern
 		}
 
-		port, err := strconv.Atoi(matches[1])
+		port, err := validateAndConvertPort(matches[1])
 		if err != nil {
-			return nil, ErrInvalidPortPattern
+			return nil, err
 		}
 
-		if port < minPort || port > maxPort {
-			return nil, ErrInvalidPortNumber
-		}
-		insertPort(port)
-
-		if matches[3] != "" {
-			secondPort, err := strconv.Atoi(matches[3])
+		if matches[3] == "" && matches[5] == "" {
+			// i.e. 3000
+			if err := insertPort(port, port); err != nil {
+				return nil, err
+			}
+		} else if matches[3] != "" {
+			// i.e. 3000-4000
+			secondPort, err := validateAndConvertPort(matches[3])
 			if err != nil {
+				return nil, err
+			}
+
+			// This is to make it work even if first port is bigger than second port
+			if port > secondPort {
 				return nil, ErrInvalidPortPattern
 			}
 
-			if port < minPort || port > maxPort {
-				return nil, ErrInvalidPortNumber
+			for i := port; i <= secondPort; i++ {
+				if err := insertPort(i, i); err != nil {
+					return nil, err
+				}
 			}
-			insertPort(secondPort)
+		} else if matches[5] != "" {
+			// i.e. 3000:4000
+			secondPort, err := validateAndConvertPort(matches[5])
+			if err != nil {
+				return nil, err
+			}
 
-			// This is to make it work even if first port is bigger than second port
-			firstPort := port
-			lastPort := secondPort
-			if port > secondPort {
-				firstPort = secondPort
-				lastPort = port
+			if err := insertPort(port, secondPort); err != nil {
+				return nil, err
 			}
-
-			for i := firstPort + 1; i < lastPort; i++ {
-				insertPort(i)
-			}
+		} else { // unexpected match
+			return nil, ErrInvalidPortPattern
 		}
 	}
 
@@ -196,7 +241,7 @@ func ParsePort(str string) ([]int, error) {
 func (st *SSHTunnel) portToString() string {
 	var portsStr []string
 	for _, port := range st.ports {
-		portStr := strconv.Itoa(port)
+		portStr := strconv.Itoa(port.Local)
 		portsStr = append(portsStr, portStr)
 	}
 
