@@ -39,6 +39,7 @@ type SSHTunnel struct {
 	sshHost       string
 	sshConfig     *ssh.ClientConfig
 	ports         []Port
+	lock          *sync.Mutex
 
 	listeners []net.Listener
 	state     string
@@ -50,6 +51,7 @@ func NewSSHTunnel(containerSlug, sshHost string, sshConfig *ssh.ClientConfig, po
 	sshTunnel.sshHost = sshHost
 	sshTunnel.sshConfig = sshConfig
 	sshTunnel.ports = ports
+	sshTunnel.lock = &sync.Mutex{}
 
 	return sshTunnel
 }
@@ -57,6 +59,7 @@ func NewSSHTunnel(containerSlug, sshHost string, sshConfig *ssh.ClientConfig, po
 func (st *SSHTunnel) Start() error {
 	logger.Infof("Start forwarding: %+v", st.ports)
 
+	st.lock.Lock()
 	sshClient, err := ssh.Dial("tcp", st.sshHost, st.sshConfig)
 	if err != nil {
 		logger.Errorf("Failed to ssh.Dial: %v", err)
@@ -108,13 +111,17 @@ func (st *SSHTunnel) Start() error {
 
 	st.state = "running"
 	st.publishStartEvent()
+
+	st.lock.Unlock()
 	return nil
 }
 
 func (st *SSHTunnel) Stop() {
+	st.lock.Lock()
 	st.stop()
 	st.state = "stopped"
 	st.publishStopEvent(nil)
+	st.lock.Unlock()
 }
 
 func (st *SSHTunnel) stop() {
