@@ -136,6 +136,8 @@ type Sync struct {
 	stopCh       chan struct{}
 	stopRemoteCh chan struct{}
 	stopUnisonCh chan struct{}
+
+	lock *sync.Mutex
 }
 
 func NewSync(nitrousAPI *nitrousapi.NitrousAPI, token, sshKeyPath, nitrousFolderPath, containerSlug, remotePath, pubKey string) (*Sync, error) {
@@ -148,6 +150,7 @@ func NewSync(nitrousAPI *nitrousapi.NitrousAPI, token, sshKeyPath, nitrousFolder
 		remotePath:        remotePath,
 		pubKey:            pubKey,
 		state:             "created",
+		lock:              &sync.Mutex{},
 	}
 
 	if err := nitrousAPI.UploadPublicKey(s.containerSlug, s.pubKey); err != nil {
@@ -180,7 +183,10 @@ func NewSync(nitrousAPI *nitrousapi.NitrousAPI, token, sshKeyPath, nitrousFolder
 }
 
 func (s *Sync) Start() {
+	s.lock.Lock()
 	s.setState("started")
+	s.publishMessage("container.sync-enabled", nil)
+	s.lock.Unlock()
 
 	runSync := func() {
 		s.syncingLock.Lock()
@@ -200,14 +206,19 @@ func (s *Sync) Start() {
 		s.syncingLock.Unlock()
 	}
 
+	s.publishMessage("container.sync-started", nil)
 	s.performSync()
-	// When stopped while first syncing
-	if s.IsStopped() {
-		return
-	}
+	s.publishMessage("container.sync-finished", nil)
 
 	if s.lastError != nil && s.errorIsFatal {
 		logger.Errorf("Local watcher is terminated: %+v", s.lastError)
+		s.publishMessage("container.sync-disabled", s.lastError)
+		return
+	}
+
+	// When stopped while first syncing
+	if s.IsStopped() {
+		s.publishMessage("container.sync-disabled", nil)
 		return
 	}
 
@@ -243,8 +254,6 @@ func (s *Sync) Start() {
 		s.errorCh <- err
 	}
 	defer notify.Stop(notifyChan)
-
-	s.publishMessage("container.sync-enabled", nil)
 
 	s.errorCh = make(chan error)
 	s.stopCh = make(chan struct{})
@@ -563,6 +572,7 @@ func (s *Sync) Stop() {
 		return
 	}
 
+	s.lock.Lock()
 	s.setState("stopped")
 	s.dirty = false
 
@@ -574,14 +584,17 @@ func (s *Sync) Stop() {
 	}
 
 	s.publishMessage("container.sync-disabled", nil)
+	s.lock.Unlock()
 }
 
 func (s *Sync) stopDueToError(err error) {
+	s.lock.Lock()
 	s.setState("stopped")
 	s.dirty = false
 	s.stopRemoteWatcher()
 	s.stopUnisonCmd()
 	s.publishMessage("container.sync-disabled", err)
+	s.lock.Unlock()
 }
 
 func (s *Sync) stopRemoteWatcher() {
