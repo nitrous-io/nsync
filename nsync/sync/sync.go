@@ -258,9 +258,7 @@ func (s *Sync) Start() {
 		case err := <-s.errorCh: // local file sync error
 			{
 				logger.Errorf("Local watcher is terminated: %+v", err)
-				s.setState("stopped")
-				s.stopRemoteWatcher()
-				s.stopUnisonCmd()
+				s.stopDueToError(err)
 				return
 			}
 		case change := <-remoteChan: // remote file system change
@@ -285,9 +283,7 @@ func (s *Sync) Start() {
 					logger.Infof("Retrying to connect to server: %d", s.remoteWatcherRetryCount)
 				} else {
 					logger.Info("It reached limit of retrying. Stopping sync")
-					s.setState("stopped")
-					s.stopRemoteWatcher()
-					s.stopUnisonCmd()
+					s.stopDueToError(err)
 					return
 				}
 			}
@@ -580,21 +576,11 @@ func (s *Sync) Stop() {
 	s.publishMessage("container.sync-disabled", nil)
 }
 
-func (s *Sync) StopWithError(err error) {
-	if s.IsStopped() {
-		return
-	}
-
+func (s *Sync) stopDueToError(err error) {
 	s.setState("stopped")
 	s.dirty = false
-
 	s.stopRemoteWatcher()
 	s.stopUnisonCmd()
-
-	if s.stopCh != nil {
-		s.stopCh <- struct{}{}
-	}
-
 	s.publishMessage("container.sync-disabled", err)
 }
 
