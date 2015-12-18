@@ -60,6 +60,7 @@ func (st *SSHTunnel) Start() error {
 	logger.Infof("Start forwarding: %+v", st.ports)
 
 	st.lock.Lock()
+	defer st.lock.Unlock()
 	sshClient, err := ssh.Dial("tcp", st.sshHost, st.sshConfig)
 	if err != nil {
 		logger.Errorf("Failed to ssh.Dial: %v", err)
@@ -97,14 +98,16 @@ func (st *SSHTunnel) Start() error {
 					return
 				}
 
-				stream, err := sshClient.Dial("tcp", remoteAddress)
-				if err != nil {
-					logger.Errorf("Failed to sshClientConn.Dial with %s failed: %s", remoteAddress, err)
-					st.stop()
-					return
-				}
+				go func(localConn net.Conn) {
+					stream, err := sshClient.Dial("tcp", remoteAddress)
+					if err != nil {
+						logger.Errorf("Failed to sshClientConn.Dial with %s failed: %s", remoteAddress, err)
+						st.stop()
+						return
+					}
 
-				pipe(localConn, stream)
+					pipe(localConn, stream)
+				}(localConn)
 			}
 		}()
 	}
@@ -112,20 +115,20 @@ func (st *SSHTunnel) Start() error {
 	st.state = "running"
 	st.publishStartEvent()
 
-	st.lock.Unlock()
 	return nil
 }
 
 func (st *SSHTunnel) Stop() {
 	st.lock.Lock()
+	defer st.lock.Unlock()
 	st.stop()
 	st.state = "stopped"
 	st.publishStopEvent(nil)
-	st.lock.Unlock()
 }
 
 func (st *SSHTunnel) stop() {
 	for i := 0; i < len(st.listeners); i++ {
+		logger.Debugf("closing %+v\n", st.listeners[i])
 		st.listeners[i].Close()
 	}
 }

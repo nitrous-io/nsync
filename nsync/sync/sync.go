@@ -573,6 +573,7 @@ func (s *Sync) Stop() {
 	}
 
 	s.lock.Lock()
+	defer s.lock.Unlock()
 	s.setState("stopped")
 	s.dirty = false
 
@@ -584,17 +585,16 @@ func (s *Sync) Stop() {
 	}
 
 	s.publishMessage("container.sync-disabled", nil)
-	s.lock.Unlock()
 }
 
 func (s *Sync) stopDueToError(err error) {
 	s.lock.Lock()
+	defer s.lock.Unlock()
 	s.setState("stopped")
 	s.dirty = false
 	s.stopRemoteWatcher()
 	s.stopUnisonCmd()
 	s.publishMessage("container.sync-disabled", err)
-	s.lock.Unlock()
 }
 
 func (s *Sync) stopRemoteWatcher() {
