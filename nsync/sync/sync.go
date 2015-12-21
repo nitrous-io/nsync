@@ -1,7 +1,10 @@
 package sync
 
 import (
+	"bufio"
+	"bytes"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"os"
 	"os/exec"
@@ -344,20 +347,56 @@ func (s *Sync) performSync() {
 		s.lastError = err
 	}
 
-	output := make(chan string)
+	outputCh := make(chan string)
 	errCh := make(chan error)
+	if s.stopUnisonCh != nil {
+		close(s.stopUnisonCh)
+	}
 	s.stopUnisonCh = make(chan struct{})
+
+	stdoutReader, err := cmd.StdoutPipe()
+	if err != nil {
+		logger.Errorf("sync: Failed to connect to stdout of unison command: %s", err)
+		s.lastError = err
+	}
+
+	stderrReader, err := cmd.StderrPipe()
+	if err != nil {
+		logger.Errorf("sync: Failed to connect to stderr of unison command: %s", err)
+		s.lastError = err
+	}
+
+	// This is to avoid "0: bad file descriptor".
+	// Start scanning output after the process is started.
+	if err := cmd.Start(); err != nil {
+		logger.Errorf("sync: Failed to start unison command: %s", err)
+		s.lastError = err
+	}
+
 	go func() {
-		b, err := cmd.CombinedOutput()
-		if err != nil {
-			errCh <- err
+		var outputBuffer bytes.Buffer
+		logger.Debug("sync: Output from unison: ")
+
+		scanner := bufio.NewScanner(io.MultiReader(stdoutReader, stderrReader))
+
+		for scanner.Scan() {
+			if b := scanner.Bytes(); len(b) > 0 {
+				logger.Debug(string(b))
+				outputBuffer.Write(b)
+			}
 		}
-		output <- string(b)
+
+		// It happens when stdout or stderr is closed while waiting.
+		// Usually happens when there is no changes.
+		if err := scanner.Err(); err != nil {
+			logger.Warnf("sync: Failure on scanner. output: %s err: %s", outputBuffer.String(), err)
+		}
+
+		outputCh <- outputBuffer.String()
 	}()
 
 	select {
-	case outStr := <-output:
-		logger.Debugf("sync: Output from unison: %s", outStr)
+	case outStr := <-outputCh:
 		s.handleOutput(outStr)
 	case err := <-errCh:
 		logger.Errorf("sync: Failed to run unison: %s", err)
@@ -368,8 +407,11 @@ func (s *Sync) performSync() {
 		return
 	}
 
-	close(s.stopUnisonCh)
-	s.stopUnisonCh = nil
+	go func() {
+		if err := cmd.Wait(); err != nil {
+			errCh <- err
+		}
+	}()
 
 	if s.lastError != nil {
 		logger.Errorf("sync: Error occurred: %v", s.lastError)
