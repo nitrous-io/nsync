@@ -6,16 +6,20 @@ import (
 	"io"
 	"log"
 	"os"
+	"os/signal"
+	"runtime"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/terminal"
 
 	"github.com/nitrous-io/nsync/pkg/sshconfig"
 )
 
-const usage = `usage: nitrous-ssh -l <username> -p <port> <ssh-host> -i <ssh-key-path> <remote-command>`
+const usage = `usage: nsync-ssh -l <username> -p <port> <ssh-host> -i <ssh-key-path> <remote-command>`
 
 func main() {
 	var (
@@ -25,6 +29,7 @@ func main() {
 		escapeChars string
 		sshKeyPath  string
 		remoteCmd   string
+		noPTY       bool
 	)
 
 	showUsage := func() {
@@ -45,6 +50,7 @@ func main() {
 	subOptions.Usage = showUsage
 	subOptions.StringVar(&escapeChars, "e", "", "")
 	subOptions.StringVar(&sshKeyPath, "i", "", "ssh key path")
+	subOptions.BoolVar(&noPTY, "T", false, "disable pty allocation")
 	subOptions.Parse(flag.Args()[1:])
 
 	if sshKeyPath == "" {
@@ -58,18 +64,77 @@ func main() {
 	sshUrl := fmt.Sprintf("ssh://%s@%s:%d", username, host, port)
 	session, err := createSession(sshUrl, sshKeyPath)
 	if err != nil {
-		panic(err)
+		log.Fatalf("Failed to create ssh session: %s", err)
 	}
 
 	defer session.Close()
 
 	done := make(chan struct{}, 1)
-	if err := copyPipes(session, done); err != nil {
-		panic(err)
+
+	if !noPTY {
+		stdinFd := int(os.Stdin.Fd())
+		oldState, err := terminal.MakeRaw(stdinFd)
+		if err != nil {
+			panic(err)
+		}
+		defer terminal.Restore(stdinFd, oldState)
+
+		session.Stdout = os.Stdout
+		session.Stderr = os.Stderr
+		session.Stdin = os.Stdin
+
+		columns, lines, err := terminal.GetSize(stdinFd)
+		if err != nil {
+			panic(err)
+		}
+
+		modes := ssh.TerminalModes{
+			ssh.ECHO:          1,
+			ssh.TTY_OP_ISPEED: 38400,
+			ssh.TTY_OP_OSPEED: 38400,
+		}
+
+		term := os.Getenv("TERM")
+		if term == "" {
+			term = "xterm"
+		}
+		if err := session.RequestPty(term, lines, columns, modes); err != nil {
+			log.Fatalf("Failed to allocate pseuudo terminal: %s", err)
+		}
+
+		resizeChan := make(chan os.Signal, 16)
+
+		if runtime.GOOS == "windows" {
+			ticker := time.NewTicker(250 * time.Millisecond)
+			defer ticker.Stop()
+
+			go func() {
+				for _ = range ticker.C {
+					resizeChan <- syscall.Signal(-1)
+				}
+				close(resizeChan)
+			}()
+		} else {
+			signal.Notify(resizeChan, syscall.Signal(0x1c)) // SIGWINCH
+			defer func() {
+				signal.Stop(resizeChan)
+				close(resizeChan)
+			}()
+		}
+
+		go resize(resizeChan, session, stdinFd)
+	} else {
+		if err := copyPipes(session, done); err != nil {
+			log.Fatalf("Failed to pipe stdio: %s", err)
+		}
 	}
 
 	errCh := make(chan error)
 	go func() {
+		if remoteCmd == "" {
+			remoteCmd = "$SHELL" // session.Shell() does not appear to work
+		}
+
 		if err := session.Run(remoteCmd); err != nil {
 			errCh <- err
 			return
@@ -83,7 +148,7 @@ func main() {
 		if _, err := fmt.Sscanf(err.Error(), "Process exited with: %d", &code); err == nil {
 			os.Exit(code)
 		}
-		panic(err)
+		log.Fatalf("Error occured: %s", err)
 	case <-done:
 		os.Exit(0)
 	}
@@ -92,17 +157,17 @@ func main() {
 func createSession(sshUrl, sshKeyPath string) (*ssh.Session, error) {
 	host, config, err := sshconfig.Config(sshUrl, sshKeyPath)
 	if err != nil {
-		log.Panic(err)
+		return nil, err
 	}
 
 	cl, err := ssh.Dial("tcp", host, config)
 	if err != nil {
-		log.Panic(err)
+		return nil, err
 	}
 
 	session, err := cl.NewSession()
 	if err != nil {
-		log.Panic(err)
+		return nil, err
 	}
 	return session, nil
 }
@@ -146,4 +211,36 @@ func copyPipes(session *ssh.Session, done chan struct{}) error {
 	}()
 
 	return nil
+}
+
+func resize(resizeChan <-chan os.Signal, session *ssh.Session, stdinFd int) {
+	type resizeMessage struct {
+		Width       uint32
+		Height      uint32
+		PixelWidth  uint32
+		PixelHeight uint32
+	}
+
+	var previousColumns, previousLines int
+
+	for _ = range resizeChan {
+		columns, lines, err := terminal.GetSize(stdinFd)
+		if err != nil {
+			panic(err)
+		}
+
+		if columns == previousColumns && lines == previousLines {
+			continue
+		}
+
+		message := resizeMessage{
+			Width:  uint32(columns),
+			Height: uint32(lines),
+		}
+
+		session.SendRequest("window-change", false, ssh.Marshal(message))
+
+		previousColumns = columns
+		previousLines = lines
+	}
 }

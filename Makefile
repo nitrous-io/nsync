@@ -12,21 +12,21 @@ osx:
 	@cp -af bin/osx64/ dist/osx64/
 	@echo "$(OK_COLOR)--> Compiling for OSX...$(NO_COLOR)"
 	go build -v -o dist/osx64/nsync
-	go build -v -o dist/osx64/nsync-ssh nitrous-ssh/nitrous-ssh.go
+	go build -v -o dist/osx64/nsync-ssh nsync-ssh/nsync-ssh.go
 
 windows:
 	@mkdir -p dist/
 	@cp -af bin/win32/ dist/win32/
 	@echo "$(OK_COLOR)--> Compiling for Windows (win32)...$(NO_COLOR)"
 	GOARCH=386 GOOS=windows go build -v -o dist/win32/nsync.exe
-	GOARCH=386 GOOS=windows go build -v -o dist/win32/nsync-ssh.exe nitrous-ssh/nitrous-ssh.go
+	GOARCH=386 GOOS=windows go build -v -o dist/win32/nsync-ssh.exe nsync-ssh/nsync-ssh.go
 
 linux:
 	@mkdir -p dist/
 	@cp -af bin/lin64/ dist/lin64/
 	@echo "$(OK_COLOR)--> Compiling for Linux (amd64)...$(NO_COLOR)"
 	GOARCH=amd64 GOOS=linux go build -v -o dist/lin64/nsync
-	GOARCH=amd64 GOOS=linux go build -v -o dist/lin64/nsync-ssh nitrous-ssh/nitrous-ssh.go
+	GOARCH=amd64 GOOS=linux go build -v -o dist/lin64/nsync-ssh nsync-ssh/nsync-ssh.go
 
 deps:
 	GO15VENDOREXPERIMENT=1 go get -d -v ./...

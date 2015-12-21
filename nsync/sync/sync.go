@@ -60,11 +60,11 @@ func init() {
 				logger.Panicf("Failed to remote existing symlink: %+v", err)
 			}
 		} else if err != nil && !os.IsNotExist(err) {
-			logger.Panicf("Failed to get stats of nitrous-ssh symlink: %+v", err)
+			logger.Panicf("Failed to get stats of nsync-ssh symlink: %+v", err)
 		}
 
 		if err := os.Symlink(sshExeRealPath, sshExeSymlinkPath); err != nil {
-			logger.Panicf("Failed to create symlink of nitrous-ssh: %+v", err)
+			logger.Panicf("Failed to create symlink of nsync-ssh: %+v", err)
 		}
 		sshExePath = sshExeSymlinkPath
 	}
@@ -464,7 +464,7 @@ func (s *Sync) performSync() {
 func (s *Sync) unisonCmd() (*exec.Cmd, error) {
 	sshRemotePath := fmt.Sprintf("%s/%s", s.sshUrl, s.remotePath)
 
-	// nitrous-ssh treats "/////" (*nix) "\\\\\" (windows) as space
+	// nsync-ssh treats "/////" (*nix) "\\\\\" (windows) as space
 	// since sshKeyPath is already filepath.Clean-ed, deliberate use of
 	// repeated path separators should already be gone.
 	sshKeyPathEscaped := strings.Replace(s.sshKeyPath, " ", strings.Repeat(string(os.PathSeparator), 5), -1)
@@ -472,6 +472,7 @@ func (s *Sync) unisonCmd() (*exec.Cmd, error) {
 	sshArgs := []string{
 		"-i",
 		sshKeyPathEscaped,
+		"-T",
 	}
 
 	args := []string{
