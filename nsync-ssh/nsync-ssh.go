@@ -14,9 +14,9 @@ import (
 	"time"
 
 	"golang.org/x/crypto/ssh"
-	"golang.org/x/crypto/ssh/terminal"
 
 	"github.com/nitrous-io/nsync/pkg/sshconfig"
+	"github.com/nitrous-io/nsync/pkg/term"
 )
 
 const usage = `usage: nsync-ssh -l <username> -p <port> <ssh-host> -i <ssh-key-path> <remote-command>`
@@ -72,20 +72,55 @@ func main() {
 	done := make(chan struct{}, 1)
 
 	if !noPTY {
-		stdinFd := int(os.Stdin.Fd())
-		oldState, err := terminal.MakeRaw(stdinFd)
-		if err != nil {
-			panic(err)
+		stdin, stdout, stderr := term.StdStreams()
+		stdinFd, stdinIsTerminal := term.GetFdInfo(stdin)
+		stdoutFd, _ := term.GetFdInfo(stdout)
+		if stdinIsTerminal {
+			oldState, err := term.SetRawTerminal(stdinFd)
+			if err != nil {
+				log.Fatalf("Failed to put stdin into raw mode: %s", err)
+			}
+			defer term.RestoreTerminal(stdinFd, oldState)
 		}
-		defer terminal.Restore(stdinFd, oldState)
 
-		session.Stdout = os.Stdout
-		session.Stderr = os.Stderr
-		session.Stdin = os.Stdin
+		session.Stdout = stdout
+		session.Stderr = stderr
+		session.Stdin = stdin
 
-		columns, lines, err := terminal.GetSize(stdinFd)
-		if err != nil {
-			panic(err)
+		var (
+			columns = 80
+			lines   = 25
+		)
+
+		if stdinIsTerminal {
+			winsize, err := term.GetWinsize(stdoutFd)
+			if err != nil {
+				log.Fatalf("Failed to get window size: %s", err)
+			}
+			columns = int(winsize.Width)
+			lines = int(winsize.Height)
+
+			resizeChan := make(chan os.Signal, 16)
+
+			if runtime.GOOS == "windows" {
+				ticker := time.NewTicker(250 * time.Millisecond)
+				defer ticker.Stop()
+
+				go func() {
+					for _ = range ticker.C {
+						resizeChan <- syscall.Signal(-1)
+					}
+					close(resizeChan)
+				}()
+			} else {
+				signal.Notify(resizeChan, syscall.Signal(0x1c)) // SIGWINCH
+				defer func() {
+					signal.Stop(resizeChan)
+					close(resizeChan)
+				}()
+			}
+
+			go resize(resizeChan, session, stdoutFd)
 		}
 
 		modes := ssh.TerminalModes{
@@ -99,30 +134,9 @@ func main() {
 			term = "xterm"
 		}
 		if err := session.RequestPty(term, lines, columns, modes); err != nil {
-			log.Fatalf("Failed to allocate pseuudo terminal: %s", err)
+			log.Fatalf("Failed to allocate pseudo terminal: %s", err)
 		}
 
-		resizeChan := make(chan os.Signal, 16)
-
-		if runtime.GOOS == "windows" {
-			ticker := time.NewTicker(250 * time.Millisecond)
-			defer ticker.Stop()
-
-			go func() {
-				for _ = range ticker.C {
-					resizeChan <- syscall.Signal(-1)
-				}
-				close(resizeChan)
-			}()
-		} else {
-			signal.Notify(resizeChan, syscall.Signal(0x1c)) // SIGWINCH
-			defer func() {
-				signal.Stop(resizeChan)
-				close(resizeChan)
-			}()
-		}
-
-		go resize(resizeChan, session, stdinFd)
 	} else {
 		if err := copyPipes(session, done); err != nil {
 			log.Fatalf("Failed to pipe stdio: %s", err)
@@ -213,7 +227,7 @@ func copyPipes(session *ssh.Session, done chan struct{}) error {
 	return nil
 }
 
-func resize(resizeChan <-chan os.Signal, session *ssh.Session, stdinFd int) {
+func resize(resizeChan <-chan os.Signal, session *ssh.Session, fd uintptr) {
 	type resizeMessage struct {
 		Width       uint32
 		Height      uint32
@@ -224,10 +238,12 @@ func resize(resizeChan <-chan os.Signal, session *ssh.Session, stdinFd int) {
 	var previousColumns, previousLines int
 
 	for _ = range resizeChan {
-		columns, lines, err := terminal.GetSize(stdinFd)
+		winsize, err := term.GetWinsize(fd)
 		if err != nil {
-			panic(err)
+			log.Fatalf("Failed to get window size: %s", err)
 		}
+		columns := int(winsize.Width)
+		lines := int(winsize.Height)
 
 		if columns == previousColumns && lines == previousLines {
 			continue
