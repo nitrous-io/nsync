@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 )
 
 type NitrousAPI struct {
@@ -16,10 +17,12 @@ type NitrousAPI struct {
 	httpClient *http.Client
 }
 
+const httpClientTimeout = 10 * time.Second
+
 var ErrContainerNotRunning = errors.New("container is not running")
 
 func NewNitrousAPI(token, host string) *NitrousAPI {
-	return &NitrousAPI{token: token, host: host, httpClient: &http.Client{}}
+	return &NitrousAPI{token: token, host: host, httpClient: &http.Client{Timeout: httpClientTimeout}}
 }
 
 func (na *NitrousAPI) GetUsername() (username string, err error) {
