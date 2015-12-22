@@ -366,6 +366,7 @@ func (s *Sync) performSync() {
 		case <-s.stopUnisonCh:
 			logger.Infof("sync: Killing unison")
 			cmd.Process.Kill()
+			s.stopUnisonCh <- struct{}{}
 			return
 		}
 	}
