@@ -354,64 +354,21 @@ func (s *Sync) performSync() {
 	}
 	s.stopUnisonCh = make(chan struct{})
 
-	stdoutReader, err := cmd.StdoutPipe()
-	if err != nil {
-		logger.Errorf("sync: Failed to connect to stdout of unison command: %s", err)
+	if err := s.runCommand(cmd, outputCh, errCh); err != nil {
 		s.lastError = err
-	}
-
-	stderrReader, err := cmd.StderrPipe()
-	if err != nil {
-		logger.Errorf("sync: Failed to connect to stderr of unison command: %s", err)
-		s.lastError = err
-	}
-
-	// This is to avoid "0: bad file descriptor".
-	// Start scanning output after the process is started.
-	if err := cmd.Start(); err != nil {
-		logger.Errorf("sync: Failed to start unison command: %s", err)
-		s.lastError = err
-	}
-
-	go func() {
-		var outputBuffer bytes.Buffer
-		logger.Debug("sync: Output from unison: ")
-
-		scanner := bufio.NewScanner(io.MultiReader(stdoutReader, stderrReader))
-
-		for scanner.Scan() {
-			if b := scanner.Bytes(); len(b) > 0 {
-				logger.Debug(string(b))
-				outputBuffer.Write(b)
-			}
+	} else {
+		select {
+		case outStr := <-outputCh:
+			s.handleOutput(outStr)
+		case err := <-errCh:
+			logger.Errorf("sync: Failed to run unison: %s", err)
+			s.lastError = err
+		case <-s.stopUnisonCh:
+			logger.Infof("sync: Killing unison")
+			cmd.Process.Kill()
+			return
 		}
-
-		// It happens when stdout or stderr is closed while waiting.
-		// Usually happens when there is no changes.
-		if err := scanner.Err(); err != nil {
-			logger.Warnf("sync: Failure on scanner. output: %s err: %s", outputBuffer.String(), err)
-		}
-
-		outputCh <- outputBuffer.String()
-	}()
-
-	select {
-	case outStr := <-outputCh:
-		s.handleOutput(outStr)
-	case err := <-errCh:
-		logger.Errorf("sync: Failed to run unison: %s", err)
-		s.lastError = err
-	case <-s.stopUnisonCh:
-		logger.Infof("sync: Killing unison")
-		cmd.Process.Kill()
-		return
 	}
-
-	go func() {
-		if err := cmd.Wait(); err != nil {
-			errCh <- err
-		}
-	}()
 
 	if s.lastError != nil {
 		logger.Errorf("sync: Error occurred: %v", s.lastError)
@@ -523,6 +480,57 @@ func (s *Sync) unisonCmd() (*exec.Cmd, error) {
 	cmd.Dir = exeFolderPath
 
 	return cmd, nil
+}
+
+func (s *Sync) runCommand(cmd *exec.Cmd, outputCh chan<- string, errCh chan<- error) error {
+	stdoutReader, err := cmd.StdoutPipe()
+	if err != nil {
+		logger.Errorf("sync: Failed to connect to stdout of unison command: %s", err)
+		return err
+	}
+
+	stderrReader, err := cmd.StderrPipe()
+	if err != nil {
+		logger.Errorf("sync: Failed to connect to stderr of unison command: %s", err)
+		return err
+	}
+
+	// This is to avoid "0: bad file descriptor".
+	// Start scanning output after the process is started.
+	if err := cmd.Start(); err != nil {
+		logger.Errorf("sync: Failed to start unison command: %s", err)
+		return err
+	}
+
+	go func() {
+		var outputBuffer bytes.Buffer
+		logger.Debug("sync: Output from unison: ")
+
+		scanner := bufio.NewScanner(io.MultiReader(stdoutReader, stderrReader))
+
+		for scanner.Scan() {
+			if b := scanner.Bytes(); len(b) > 0 {
+				logger.Debug(string(b))
+				outputBuffer.Write(b)
+			}
+		}
+
+		// It happens when stdout or stderr is closed while waiting.
+		// Usually happens when there is no changes.
+		if err := scanner.Err(); err != nil {
+			logger.Warnf("sync: Failure on scanner. output: %s err: %s", outputBuffer.String(), err)
+		}
+
+		outputCh <- outputBuffer.String()
+	}()
+
+	go func() {
+		if err := cmd.Wait(); err != nil {
+			errCh <- err
+		}
+	}()
+
+	return nil
 }
 
 func (s *Sync) UploadSyncIgnore() error {
