@@ -341,12 +341,7 @@ func (s *Sync) performSync() {
 	s.dirty = false
 	s.lastTransferCount = -1
 
-	cmd, err := s.unisonCmd()
-	if err != nil {
-		logger.Errorf("sync: Failed to compile unison command options: %s", err)
-		s.lastError = err
-	}
-
+	cmd := s.unisonCmd()
 	outputCh := make(chan string)
 	errCh := make(chan error)
 	if s.stopUnisonCh != nil {
@@ -419,7 +414,7 @@ func (s *Sync) performSync() {
 	}
 }
 
-func (s *Sync) unisonCmd() (*exec.Cmd, error) {
+func (s *Sync) unisonCmd() *exec.Cmd {
 	sshRemotePath := fmt.Sprintf("%s/%s", s.sshUrl, s.remotePath)
 
 	// nsync-ssh treats "/////" (*nix) "\\\\\" (windows) as space
@@ -480,7 +475,7 @@ func (s *Sync) unisonCmd() (*exec.Cmd, error) {
 	cmd.Env = append(cmd.Env, envmap.MapToEnv(env)...)
 	cmd.Dir = exeFolderPath
 
-	return cmd, nil
+	return cmd
 }
 
 func (s *Sync) runCommand(cmd *exec.Cmd, outputCh chan<- string, errCh chan<- error) error {
