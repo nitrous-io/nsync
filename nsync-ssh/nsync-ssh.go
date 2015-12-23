@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"flag"
 	"fmt"
 	"io"
@@ -30,6 +31,7 @@ func main() {
 		sshKeyPath  string
 		remoteCmd   string
 		noPTY       bool
+		ansiResize  bool
 	)
 
 	showUsage := func() {
@@ -51,6 +53,7 @@ func main() {
 	subOptions.StringVar(&escapeChars, "e", "", "")
 	subOptions.StringVar(&sshKeyPath, "i", "", "ssh key path")
 	subOptions.BoolVar(&noPTY, "T", false, "disable pty allocation")
+	subOptions.BoolVar(&ansiResize, "z", false, "respond to ansi resize")
 	subOptions.Parse(flag.Args()[1:])
 
 	if sshKeyPath == "" {
@@ -72,9 +75,10 @@ func main() {
 	done := make(chan struct{}, 1)
 
 	if !noPTY {
-		stdin, stdout, stderr := term.StdStreams()
+		stdin, stdout, _ /*, stderr */ := term.StdStreams()
 		stdinFd, stdinIsTerminal := term.GetFdInfo(stdin)
 		stdoutFd, _ := term.GetFdInfo(stdout)
+
 		if stdinIsTerminal {
 			oldState, err := term.SetRawTerminal(stdinFd)
 			if err != nil {
@@ -83,9 +87,9 @@ func main() {
 			defer term.RestoreTerminal(stdinFd, oldState)
 		}
 
-		session.Stdout = stdout
-		session.Stderr = stderr
-		session.Stdin = stdin
+		if err := copyPipes(session, done, ansiResize); err != nil {
+			log.Fatalf("Failed to pipe stdio: %s", err)
+		}
 
 		var (
 			columns = 80
@@ -138,7 +142,7 @@ func main() {
 		}
 
 	} else {
-		if err := copyPipes(session, done); err != nil {
+		if err := copyPipes(session, done, false); err != nil {
 			log.Fatalf("Failed to pipe stdio: %s", err)
 		}
 	}
@@ -186,7 +190,7 @@ func createSession(sshUrl, sshKeyPath string) (*ssh.Session, error) {
 	return session, nil
 }
 
-func copyPipes(session *ssh.Session, done chan struct{}) error {
+func copyPipes(session *ssh.Session, done chan struct{}, ansiResize bool) error {
 	var o sync.Once
 	var c = make(chan bool)
 
@@ -210,7 +214,11 @@ func copyPipes(session *ssh.Session, done chan struct{}) error {
 	}
 
 	go func() {
-		io.Copy(stdin, os.Stdin)
+		if ansiResize {
+			copyWithAnsiResize(session, stdin, os.Stdin)
+		} else {
+			io.Copy(stdin, os.Stdin)
+		}
 		o.Do(terminate)
 	}()
 
@@ -227,7 +235,7 @@ func copyPipes(session *ssh.Session, done chan struct{}) error {
 	return nil
 }
 
-func resize(resizeChan <-chan os.Signal, session *ssh.Session, fd uintptr) {
+func sendResize(session *ssh.Session, columns, lines int) {
 	type resizeMessage struct {
 		Width       uint32
 		Height      uint32
@@ -235,6 +243,15 @@ func resize(resizeChan <-chan os.Signal, session *ssh.Session, fd uintptr) {
 		PixelHeight uint32
 	}
 
+	message := resizeMessage{
+		Width:  uint32(columns),
+		Height: uint32(lines),
+	}
+
+	session.SendRequest("window-change", false, ssh.Marshal(message))
+}
+
+func resize(resizeChan <-chan os.Signal, session *ssh.Session, fd uintptr) {
 	var previousColumns, previousLines int
 
 	for _ = range resizeChan {
@@ -249,14 +266,67 @@ func resize(resizeChan <-chan os.Signal, session *ssh.Session, fd uintptr) {
 			continue
 		}
 
-		message := resizeMessage{
-			Width:  uint32(columns),
-			Height: uint32(lines),
-		}
-
-		session.SendRequest("window-change", false, ssh.Marshal(message))
+		sendResize(session, columns, lines)
 
 		previousColumns = columns
 		previousLines = lines
 	}
+}
+
+var ansiResizePrefix = []byte("\x1b[8;")
+
+func copyWithAnsiResize(session *ssh.Session, dst io.Writer, src io.Reader) (written int64, err error) {
+	// If the reader has a WriteTo method, use it to do the copy.
+	// Avoids an allocation and a copy.
+	if wt, ok := src.(io.WriterTo); ok {
+		return wt.WriteTo(dst)
+	}
+	// Similarly, if the writer has a ReadFrom method, use it to do the copy.
+	if rt, ok := dst.(io.ReaderFrom); ok {
+		return rt.ReadFrom(src)
+	}
+	buf := make([]byte, 32*1024)
+	for {
+		nr, er := src.Read(buf)
+
+		iStart := bytes.Index(buf, ansiResizePrefix)
+		if iStart != -1 {
+			iEnd := bytes.IndexByte(buf[iStart:], byte('t'))
+			if iEnd != -1 {
+				iEnd += iStart + 1
+				code := buf[iStart+4 : iEnd]
+				var lines, columns int
+				fmt.Sscanf(string(code), "%d;%dt", &lines, &columns)
+				// send resize
+				sendResize(session, columns, lines)
+
+				// remove code from buf
+				copy(buf[iStart:], buf[iEnd:])
+				nr -= (iEnd - iStart)
+			}
+		}
+
+		if nr > 0 {
+			nw, ew := dst.Write(buf[0:nr])
+			if nw > 0 {
+				written += int64(nw)
+			}
+			if ew != nil {
+				err = ew
+				break
+			}
+			if nr != nw {
+				err = io.ErrShortWrite
+				break
+			}
+		}
+		if er == io.EOF {
+			break
+		}
+		if er != nil {
+			err = er
+			break
+		}
+	}
+	return written, err
 }
