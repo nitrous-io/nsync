@@ -1,6 +1,7 @@
 package logger
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -128,4 +129,17 @@ func Event(name string, data interface{}) {
 	}
 
 	sendf("event", "%s", string(b))
+}
+
+type debugLogger struct{}
+
+var debugLoggerSingleton = &debugLogger{}
+
+func (d *debugLogger) Write(p []byte) (n int, err error) {
+	Debug(string(bytes.TrimSpace(p)))
+	return len(p), nil
+}
+
+func DebugLogger() *debugLogger {
+	return debugLoggerSingleton
 }

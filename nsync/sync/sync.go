@@ -1,7 +1,6 @@
 package sync
 
 import (
-	"bufio"
 	"bytes"
 	"fmt"
 	"io"
@@ -342,28 +341,30 @@ func (s *Sync) performSync() {
 	s.lastTransferCount = -1
 
 	cmd := s.unisonCmd()
-	outputCh := make(chan string)
-	errCh := make(chan error)
-	if s.stopUnisonCh != nil {
-		close(s.stopUnisonCh)
-	}
-	s.stopUnisonCh = make(chan struct{})
 
-	if err := s.runCommand(cmd, outputCh, errCh); err != nil {
-		s.lastError = err
-	} else {
-		select {
-		case outStr := <-outputCh:
-			s.handleOutput(outStr)
-		case err := <-errCh:
-			logger.Errorf("sync: Failed to run unison: %s", err)
+	s.stopUnisonCh = make(chan struct{})
+	doneCh := make(chan struct{})
+
+	go func() {
+		output, err := s.runCommand(cmd)
+		if err != nil {
+			s.handleOutput(output)
+		} else {
 			s.lastError = err
-		case <-s.stopUnisonCh:
-			logger.Infof("sync: Killing unison")
-			cmd.Process.Kill()
-			s.stopUnisonCh <- struct{}{}
-			return
 		}
+		doneCh <- struct{}{}
+	}()
+
+	select {
+	case <-s.stopUnisonCh:
+		logger.Infof("sync: Killing unison")
+		if cmd.Process != nil {
+			cmd.Process.Kill()
+		}
+		s.stopUnisonCh <- struct{}{}
+		return
+	case <-doneCh:
+		break
 	}
 
 	if s.lastError != nil {
@@ -431,22 +432,27 @@ func (s *Sync) unisonCmd() *exec.Cmd {
 	args := []string{
 		s.localPath,              // path to watch
 		sshRemotePath,            // ssh remote path
+		"-auto=true",             // automatically accept default actions
+		"-batch=true",            // don't ask questions
+		"-dumbtty=true",          // no fancy terminal updates
+		"-confirmbigdel=false",   // don't ask about whole-replica deletes
+		"-confirmmerge=false",    // don't ask before committing a merge
+		"-log=false",             // don't log to file
+		"-perms=777",             // synchronize all permissions
 		"-prefer", sshRemotePath, // prefer server's copy when there is a conflict
-		"-ui=text",             // CLI mode
-		"-auto",                // automatically accept default actions
-		"-batch",               // don't ask questions
-		"-perms=777",           // synchronize all permissions
-		"-confirmbigdel=false", // don't ask about whole-replica deletes
-		"-confirmmerge=false",  // don't ask before committing a merge
-		"-log=false",           // don't log to file
-		"-rsrc=false",          // don't sync resource forks
-		"-sshcmd", sshExePath,  // local ssh command path
+		"-rsrc=false",                          // don't sync resource forks
+		"-servercmd=/nitrous/nitrous-unison",   // location of unison binary on server
 		"-sshargs", strings.Join(sshArgs, " "), // arguments to ssh command
-		"-servercmd=/nitrous/nitrous-unison", // location of unison binary on server
-		"-times", // sync modified times
+		"-sshcmd", sshExePath, // local ssh command path
+		"-times=true", // sync modified times
 		"-ignore", fmt.Sprintf("Name {%s}", strings.Join(ignoreList, ",")),
 		"-ignore", fmt.Sprintf("Path {%s}", strings.Join(ignorePathList, ",")),
 		"-ignorecase=true",
+		"-ui=text", // CLI mode
+	}
+
+	if isWindows {
+		args = append(args, "-fastcheck=true")
 	}
 
 	if _, err := os.Stat(s.localPath); os.IsNotExist(err) || s.shouldIgnoreArchives {
@@ -478,55 +484,20 @@ func (s *Sync) unisonCmd() *exec.Cmd {
 	return cmd
 }
 
-func (s *Sync) runCommand(cmd *exec.Cmd, outputCh chan<- string, errCh chan<- error) error {
-	stdoutReader, err := cmd.StdoutPipe()
-	if err != nil {
-		logger.Errorf("sync: Failed to connect to stdout of unison command: %s", err)
-		return err
-	}
+func (s *Sync) runCommand(cmd *exec.Cmd) (string, error) {
+	var buf = &bytes.Buffer{}
 
-	stderrReader, err := cmd.StderrPipe()
-	if err != nil {
-		logger.Errorf("sync: Failed to connect to stderr of unison command: %s", err)
-		return err
-	}
+	cmd.Stdout = io.MultiWriter(buf, logger.DebugLogger())
+	cmd.Stderr = io.MultiWriter(buf, logger.DebugLogger())
 
 	// This is to avoid "0: bad file descriptor".
 	// Start scanning output after the process is started.
-	if err := cmd.Start(); err != nil {
-		logger.Errorf("sync: Failed to start unison command: %s", err)
-		return err
+	if err := cmd.Run(); err != nil {
+		logger.Errorf("sync: Unison command failed: %s", err)
+		return buf.String(), err
 	}
 
-	go func() {
-		var outputBuffer bytes.Buffer
-		logger.Debug("sync: Output from unison: ")
-
-		scanner := bufio.NewScanner(io.MultiReader(stdoutReader, stderrReader))
-
-		for scanner.Scan() {
-			if b := scanner.Bytes(); len(b) > 0 {
-				logger.Debug(string(b))
-				outputBuffer.Write(b)
-			}
-		}
-
-		// It happens when stdout or stderr is closed while waiting.
-		// Usually happens when there is no changes.
-		if err := scanner.Err(); err != nil {
-			logger.Warnf("sync: Failure on scanner. output: %s err: %s", outputBuffer.String(), err)
-		}
-
-		outputCh <- outputBuffer.String()
-	}()
-
-	go func() {
-		if err := cmd.Wait(); err != nil {
-			errCh <- err
-		}
-	}()
-
-	return nil
+	return buf.String(), nil
 }
 
 func (s *Sync) UploadSyncIgnore() error {
