@@ -257,6 +257,39 @@ func (s *Server) stopSync(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(`{"status": "OK"}`))
 }
 
+func (s *Server) uploadFile(w http.ResponseWriter, r *http.Request) {
+	if !s.isInitialized() {
+		w.WriteHeader(http.StatusForbidden)
+		w.Write([]byte(`{"error": "token is required"}`))
+		return
+	}
+
+	path := r.FormValue("path")
+	if path == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(`{"error": "path is required"}`))
+		return
+	}
+
+	containerSlug := mux.Vars(r)["slug"]
+	client, ok := s.syncClients[containerSlug]
+	if !ok {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`{"error": "sync is not running"}`))
+		return
+	}
+
+	if err := client.UploadFile(path); err != nil {
+		logger.Errorf("Failed to upload file: %s, err: %v", path, err)
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`{"error": "failed to upload file"}`))
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(`{"status": "OK"}`))
+}
+
 func NewServer(stopCh chan struct{}) *Server {
 	server := &Server{}
 	server.stopCh = stopCh
@@ -271,6 +304,7 @@ func NewServer(stopCh chan struct{}) *Server {
 	r.HandleFunc("/containers/{slug}/tunnel/stop", server.stopPortForwarding).Methods("POST")
 	r.HandleFunc("/containers/{slug}/sync/start", server.startSync).Methods("POST")
 	r.HandleFunc("/containers/{slug}/sync/stop", server.stopSync).Methods("POST")
+	r.HandleFunc("/containers/{slug}/upload", server.uploadFile).Methods("POST")
 	r.HandleFunc("/debug/pprof/{path:.*}", pprof.Index)
 
 	server.router = r
