@@ -608,7 +608,12 @@ func (s *Sync) UploadFile(path string) error {
 
 func (s *Sync) getSFTPClient() (*sftp.Client, error) {
 	if s.sftpClient != nil {
-		return s.sftpClient, nil
+		// Send a dummy command over the wire to check whether the connection
+		// is still working.
+		if _, err := s.sftpClient.Getwd(); err == nil {
+			return s.sftpClient, nil
+		}
+		s.closeSFTPClient()
 	}
 
 	host, config, err := sshconfig.Config(s.sshUrl, s.sshKeyPath)
