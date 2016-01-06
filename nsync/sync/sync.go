@@ -537,7 +537,7 @@ func (s *Sync) UploadSyncIgnore() error {
 
 	fi, err = sftp.Stat(syncIgnoreRemotePath)
 	if err != nil {
-		if strings.Contains(err.Error(), "SSH_FX_NO_SUCH_FILE") {
+		if os.IsNotExist(err) {
 			return nil
 		}
 		return err
