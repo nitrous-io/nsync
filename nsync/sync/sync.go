@@ -521,9 +521,11 @@ func (s *Sync) UploadSyncIgnore() error {
 
 	syncIgnoreLocalPath := filepath.Join(s.localPath, syncIgnoreFile)
 	syncIgnoreRemotePath := filepath.Join(s.remotePath, syncIgnoreFile)
+	if isWindows {
+		syncIgnoreRemotePath = filepath.ToSlash(syncIgnoreRemotePath)
+	}
 
 	var localModTime, remoteModTime time.Time
-
 	fi, err := os.Stat(syncIgnoreLocalPath)
 	if err != nil && !os.IsNotExist(err) {
 		return err
