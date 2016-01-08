@@ -173,4 +173,48 @@ var _ = Describe("nsync/server", func() {
 			Expect(string(message)).To(Equal(`{"error": "token is required"}`))
 		})
 	})
+
+	Describe("POST /containers/{slug}/upload", func() {
+		It("responds with 403 if it is not initialized", func() {
+			req, err = newRequest("POST", "/containers/test-container/upload", nil)
+			Expect(err).To(BeNil())
+
+			handler.ServeHTTP(res, req)
+			Expect(res.Code).To(Equal(http.StatusForbidden))
+
+			message, err := ioutil.ReadAll(res.Body)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(message)).To(Equal(`{"error": "token is required"}`))
+		})
+
+		It("responds with 400 if file path is not specified", func() {
+			svr.SetSSHInfo("token", "nitrous-path", "ssh-key-path", "key")
+			req, err = newRequest("POST", "/containers/test-container/upload", nil)
+			Expect(err).To(BeNil())
+
+			handler.ServeHTTP(res, req)
+			Expect(res.Code).To(Equal(http.StatusBadRequest))
+
+			message, err := ioutil.ReadAll(res.Body)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(message)).To(Equal(`{"error": "path is required"}`))
+		})
+
+		It("responds with 400 if sync is not running", func() {
+			svr.SetSSHInfo("token", "nitrous-path", "ssh-key-path", "key")
+
+			data := &url.Values{}
+			data.Set("path", "/home/nitrous/.ssh/id_rsa")
+
+			req, err = newRequest("POST", "/containers/test-container/upload", data)
+			Expect(err).To(BeNil())
+
+			handler.ServeHTTP(res, req)
+			Expect(res.Code).To(Equal(http.StatusInternalServerError))
+
+			message, err := ioutil.ReadAll(res.Body)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(message)).To(Equal(`{"error": "sync is not running"}`))
+		})
+	})
 })

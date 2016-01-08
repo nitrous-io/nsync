@@ -37,7 +37,7 @@
 		},
 		{
 			"ImportPath": "github.com/pkg/sftp",
-			"Rev": "e09e01e6e10971840f7639df3dd747e6fd2dff3a"
+			"Rev": "42c8b50df5531555393e888d6724dcd81511835e"
 		},
 		{
 			"ImportPath": "github.com/rjeczalik/notify",

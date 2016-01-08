@@ -140,6 +140,9 @@ type Sync struct {
 	stopUnisonCh chan struct{}
 
 	lock *sync.Mutex
+
+	sshConn    ssh.Conn
+	sftpClient *sftp.Client
 }
 
 func NewSync(nitrousAPI *nitrousapi.NitrousAPI, token, sshKeyPath, nitrousFolderPath, containerSlug, remotePath, pubKey string) (*Sync, error) {
@@ -230,7 +233,7 @@ func (s *Sync) Start() {
 
 	var timer *time.Timer
 	handleChange := func(changedPath string, local bool) {
-		if !pathmatch.PathMatchAny(changedPath, append(ignoreList, ignorePathList...)...) {
+		if !s.isIgnored(changedPath) {
 			logger.Debug("changed path ")
 			if local {
 				logger.Debug("(local): ")
@@ -264,7 +267,20 @@ func (s *Sync) Start() {
 		select {
 		case change := <-notifyChan: // local file system change
 			{
-				handleChange(change.Path(), true)
+				changedPath := change.Path()
+				if s.isIgnored(changedPath) {
+					break
+				}
+
+				if change.Event() == notify.Write {
+					if err := s.UploadFile(changedPath); err != nil {
+						logger.Errorf("Failed to upload %s before sync: %s", changedPath, err)
+						// Run unison to sync in case of error on uploading
+						handleChange(changedPath, true)
+					}
+				} else {
+					handleChange(changedPath, true)
+				}
 			}
 		case err := <-s.errorCh: // local file sync error
 			{
@@ -502,28 +518,18 @@ func (s *Sync) runCommand(cmd *exec.Cmd) (string, error) {
 
 func (s *Sync) UploadSyncIgnore() error {
 	// Copy .syncignore from remote
-	host, config, err := sshconfig.Config(s.sshUrl, s.sshKeyPath)
+	client, err := s.getSFTPClient()
 	if err != nil {
 		return err
 	}
-
-	conn, err := ssh.Dial("tcp", host, config)
-	if err != nil {
-		return err
-	}
-	defer conn.Close()
-
-	sftp, err := sftp.NewClient(conn)
-	if err != nil {
-		return err
-	}
-	defer sftp.Close()
 
 	syncIgnoreLocalPath := filepath.Join(s.localPath, syncIgnoreFile)
 	syncIgnoreRemotePath := filepath.Join(s.remotePath, syncIgnoreFile)
+	if isWindows {
+		syncIgnoreRemotePath = filepath.ToSlash(syncIgnoreRemotePath)
+	}
 
 	var localModTime, remoteModTime time.Time
-
 	fi, err := os.Stat(syncIgnoreLocalPath)
 	if err != nil && !os.IsNotExist(err) {
 		return err
@@ -533,9 +539,9 @@ func (s *Sync) UploadSyncIgnore() error {
 		localModTime = fi.ModTime()
 	}
 
-	fi, err = sftp.Stat(syncIgnoreRemotePath)
+	fi, err = client.Stat(syncIgnoreRemotePath)
 	if err != nil {
-		if strings.Contains(err.Error(), "SSH_FX_NO_SUCH_FILE") {
+		if os.IsNotExist(err) {
 			return nil
 		}
 		return err
@@ -544,7 +550,7 @@ func (s *Sync) UploadSyncIgnore() error {
 	remoteModTime = fi.ModTime()
 
 	if localModTime.Before(remoteModTime) {
-		f, err := sftp.OpenFile(syncIgnoreRemotePath, os.O_RDONLY)
+		f, err := client.OpenFile(syncIgnoreRemotePath, os.O_RDONLY)
 		if err != nil {
 			return err
 		}
@@ -563,6 +569,71 @@ func (s *Sync) UploadSyncIgnore() error {
 	}
 
 	return nil
+}
+
+func (s *Sync) UploadFile(path string) error {
+	client, err := s.getSFTPClient()
+	if err != nil {
+		return err
+	}
+
+	relPath, err := filepath.Rel(s.localPath, path)
+	if err != nil {
+		return err
+	}
+
+	remotePath := filepath.Join(s.remotePath, relPath)
+	if isWindows {
+		remotePath = filepath.ToSlash(remotePath)
+	}
+
+	remoteFile, err := client.OpenFile(remotePath, os.O_TRUNC|os.O_WRONLY)
+	if err != nil {
+		return err
+	}
+	defer remoteFile.Close()
+
+	localFile, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer localFile.Close()
+
+	if _, err := io.Copy(remoteFile, localFile); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (s *Sync) getSFTPClient() (*sftp.Client, error) {
+	if s.sftpClient != nil {
+		// Send a dummy command over the wire to check whether the connection
+		// is still working.
+		if _, err := s.sftpClient.Getwd(); err == nil {
+			return s.sftpClient, nil
+		}
+		s.closeSFTPClient()
+	}
+
+	host, config, err := sshconfig.Config(s.sshUrl, s.sshKeyPath)
+	if err != nil {
+		return nil, err
+	}
+
+	conn, err := ssh.Dial("tcp", host, config)
+	if err != nil {
+		return nil, err
+	}
+	s.sshConn = conn
+
+	client, err := sftp.NewClient(conn)
+	if err != nil {
+		return nil, err
+	}
+	s.sftpClient = client
+
+	return client, nil
 }
 
 func (s *Sync) parseSyncIgnore() error {
@@ -597,6 +668,7 @@ func (s *Sync) Stop() {
 
 	s.stopRemoteWatcher()
 	s.stopUnisonCmd()
+	s.closeSFTPClient()
 
 	if s.stopCh != nil {
 		s.stopCh <- struct{}{}
@@ -612,6 +684,7 @@ func (s *Sync) stopDueToError(err error) {
 	s.dirty = false
 	s.stopRemoteWatcher()
 	s.stopUnisonCmd()
+	s.closeSFTPClient()
 	s.publishMessage("container.sync-disabled", err)
 }
 
@@ -651,6 +724,15 @@ func (s *Sync) stopUnisonCmd() {
 	}
 }
 
+func (s *Sync) closeSFTPClient() {
+	if s.sftpClient != nil {
+		s.sftpClient.Close()
+	}
+	if s.sshConn != nil {
+		s.sshConn.Close()
+	}
+}
+
 func (s *Sync) setState(state string) {
 	s.state = state
 }
@@ -674,4 +756,8 @@ func (s *Sync) publishMessage(title string, err error) {
 	} else {
 		logger.Infof("Published message %s with %+v", title, message)
 	}
+}
+
+func (s *Sync) isIgnored(path string) bool {
+	return pathmatch.PathMatchAny(path, append(ignoreList, ignorePathList...)...)
 }
