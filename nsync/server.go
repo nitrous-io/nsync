@@ -296,9 +296,10 @@ func (s *Server) Start() {
 			listener, err = httpserver.Listen(server)
 			if err != nil && err.(*net.OpError).Err.(*os.SyscallError).Err == syscall.EADDRINUSE {
 				// port is taken, try another port
+				s.port += 1
 				server.Addr = fmt.Sprintf("127.0.0.1:%d", s.port)
 				logger.Infof("Port is in use. trying with %d", s.port)
-				s.port += 1
+
 				if s.port > MAX_PORT {
 					errCh <- errNoAvailablePorts
 					return
