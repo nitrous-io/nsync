@@ -2,6 +2,7 @@ package sync
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -42,6 +43,8 @@ var (
 
 	syncIgnoreFile = ".syncignore"
 	tempFolderPath = "/tmp"
+
+	errNotFullySynced = errors.New("folders are not fully created before upload")
 )
 
 const fileSyncDelay = 100 * time.Millisecond
@@ -139,10 +142,12 @@ type Sync struct {
 	stopRemoteCh chan struct{}
 	stopUnisonCh chan struct{}
 
-	lock *sync.Mutex
+	lock sync.Mutex
 
 	sshConn    ssh.Conn
 	sftpClient *sftp.Client
+
+	fileSyncLock sync.Mutex
 }
 
 func NewSync(nitrousAPI *nitrousapi.NitrousAPI, token, sshKeyPath, nitrousFolderPath, containerSlug, remotePath, pubKey string) (*Sync, error) {
@@ -155,7 +160,6 @@ func NewSync(nitrousAPI *nitrousapi.NitrousAPI, token, sshKeyPath, nitrousFolder
 		remotePath:        remotePath,
 		pubKey:            pubKey,
 		state:             "created",
-		lock:              &sync.Mutex{},
 	}
 
 	if err := nitrousAPI.UploadPublicKey(s.containerSlug, s.pubKey); err != nil {
@@ -200,6 +204,8 @@ func (s *Sync) Start() {
 		} else {
 			s.syncing = true
 			go func() {
+				s.fileSyncLock.Lock()
+				defer s.fileSyncLock.Unlock()
 				s.publishMessage("container.sync-started", nil)
 				s.performSync()
 				s.syncingLock.Lock()
@@ -272,12 +278,24 @@ func (s *Sync) Start() {
 					break
 				}
 
+				logger.Debugf("changes: %+v", change)
 				if change.Event() == notify.Write {
+					logger.Debugf("upload: started (%s)", changedPath)
+					s.fileSyncLock.Lock()
 					if err := s.UploadFile(changedPath); err != nil {
-						logger.Errorf("Failed to upload %s before sync: %s", changedPath, err)
-						// Run unison to sync in case of error on uploading
+						s.fileSyncLock.Unlock()
+						logger.Debugf("upload: failed (%s)", changedPath)
+						if err == errNotFullySynced {
+							logger.Warnf("Failed to upload %s with %s event before sync because sync is are not done yet", changedPath, change.Event().String())
+						} else {
+							logger.Errorf("Failed to upload %s with %s event before sync: %s", changedPath, change.Event().String(), err)
+						}
+						// When uploading file is failed, it runs unison command as backup
 						handleChange(changedPath, true)
+						break
 					}
+					s.fileSyncLock.Unlock()
+					logger.Debugf("upload: finished (%s)", changedPath)
 				} else {
 					handleChange(changedPath, true)
 				}
@@ -587,8 +605,17 @@ func (s *Sync) UploadFile(path string) error {
 		remotePath = filepath.ToSlash(remotePath)
 	}
 
-	remoteFile, err := client.OpenFile(remotePath, os.O_TRUNC|os.O_WRONLY)
+	// - Create a new file if not exist.
+	// - Truncate the file if exist.
+	remoteFile, err := client.OpenFile(remotePath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY)
 	if err != nil {
+		if os.IsNotExist(err) {
+			// This happens when it tries upload file without parent directories.
+			// The reason is rjeczalik/notify does not return list of changed path properly.
+			// It return an error, so we can run unison command to create parent directories.
+			// Since SFTP does not have `mkdir -p` feature yet.
+			return errNotFullySynced
+		}
 		return err
 	}
 	defer remoteFile.Close()
