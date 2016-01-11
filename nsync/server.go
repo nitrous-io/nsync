@@ -290,6 +290,25 @@ func (s *Server) uploadFile(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(`{"status": "OK"}`))
 }
 
+func (s *Server) registerSSHKey(w http.ResponseWriter, r *http.Request) {
+	if !s.isInitialized() {
+		w.WriteHeader(http.StatusForbidden)
+		w.Write([]byte(`{"error": "token is required"}`))
+		return
+	}
+
+	containerSlug := mux.Vars(r)["slug"]
+	if err := s.nitrousAPI.UploadPublicKey(containerSlug, s.pubKey); err != nil {
+		logger.Errorf("Failed to register ssh key: %s", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`{"error": "failed to register ssh key"}`))
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(`{"status": "OK"}`))
+}
+
 func NewServer(stopCh chan struct{}) *Server {
 	server := &Server{}
 	server.stopCh = stopCh
@@ -305,6 +324,7 @@ func NewServer(stopCh chan struct{}) *Server {
 	r.HandleFunc("/containers/{slug}/sync/start", server.startSync).Methods("POST")
 	r.HandleFunc("/containers/{slug}/sync/stop", server.stopSync).Methods("POST")
 	r.HandleFunc("/containers/{slug}/upload", server.uploadFile).Methods("POST")
+	r.HandleFunc("/containers/{slug}/register_ssh_key", server.registerSSHKey).Methods("POST")
 	r.HandleFunc("/debug/pprof/{path:.*}", pprof.Index)
 
 	server.router = r

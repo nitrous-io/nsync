@@ -217,4 +217,18 @@ var _ = Describe("nsync/server", func() {
 			Expect(string(message)).To(Equal(`{"error": "sync is not running"}`))
 		})
 	})
+
+	Describe("POST /containers/{slug}/register_ssh_key", func() {
+		It("responds with 403 if it is not initialized", func() {
+			req, err = newRequest("POST", "/containers/test-container/register_ssh_key", nil)
+			Expect(err).To(BeNil())
+
+			handler.ServeHTTP(res, req)
+			Expect(res.Code).To(Equal(http.StatusForbidden))
+
+			message, err := ioutil.ReadAll(res.Body)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(message)).To(Equal(`{"error": "token is required"}`))
+		})
+	})
 })
