@@ -44,7 +44,8 @@ var (
 	syncIgnoreFile = ".syncignore"
 	tempFolderPath = "/tmp"
 
-	errNotFullySynced = errors.New("folders are not fully created before upload")
+	unisonTempfileExtension = ".unison.tmp"
+	errNotFullySynced       = errors.New("folders are not fully created before upload")
 )
 
 const fileSyncDelay = 100 * time.Millisecond
@@ -279,7 +280,7 @@ func (s *Sync) Start() {
 				}
 
 				logger.Debugf("changes: %+v", change)
-				if change.Event() == notify.Write {
+				if change.Event() == notify.Write && !strings.HasSuffix(changedPath, unisonTempfileExtension) {
 					logger.Debugf("upload: started (%s)", changedPath)
 					s.fileSyncLock.Lock()
 					if err := s.UploadFile(changedPath); err != nil {
