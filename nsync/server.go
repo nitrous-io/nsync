@@ -348,7 +348,9 @@ func (s *Server) Start() {
 
 		for s.port <= MAX_PORT {
 			listener, err = httpserver.Listen(server)
-			if err != nil && err.(*net.OpError).Err.(*os.SyscallError).Err == syscall.EADDRINUSE {
+			if err != nil && (err.(*net.OpError).Err.(*os.SyscallError).Err == syscall.EADDRINUSE ||
+				// For windows, refer to https://msdn.microsoft.com/en-us/library/windows/desktop/ms740668#WSAEADDRINUSE
+				strings.Contains(err.Error(), "Only one usage of each socket address (protocol/network address/port) is normally permitted.")) {
 				// port is taken, try another port
 				s.port += 1
 				server.Addr = fmt.Sprintf("127.0.0.1:%d", s.port)
@@ -380,7 +382,7 @@ func (s *Server) Start() {
 		s.stopAll()
 		s.stopCh <- struct{}{}
 	case err := <-errCh:
-		logger.Errorf("got error: %+v", err)
+		logger.Errorf("server is stopped with error: %+v", err)
 	}
 }
 
