@@ -1,6 +1,8 @@
 package main
 
 import (
+	"flag"
+	"fmt"
 	"io/ioutil"
 	"os"
 	"os/signal"
@@ -10,9 +12,19 @@ import (
 	"github.com/nitrous-io/nsync/pkg/logger"
 )
 
+var version string
+
 func main() {
 	if os.Getenv("NSYNC_LOG_LEVEL") != "" {
 		logger.SetLogLevel(os.Getenv("NSYNC_LOG_LEVEL"))
+	}
+
+	nVersionFlag := flag.Bool("v", false, "Display the version and exit")
+	flag.Parse()
+
+	if *nVersionFlag {
+		fmt.Printf("nsync version %v\n", version)
+		os.Exit(0)
 	}
 
 	go logger.Start()

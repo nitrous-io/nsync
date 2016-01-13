@@ -22,6 +22,8 @@ import (
 
 const usage = `usage: nsync-ssh -l <username> -p <port> <ssh-host> -i <ssh-key-path> <remote-command>`
 
+var version string
+
 func main() {
 	var (
 		username    string
@@ -39,9 +41,15 @@ func main() {
 	}
 
 	flag.CommandLine.Usage = showUsage
+	nVersionFlag := flag.Bool("v", false, "Display the version and exit")
 	flag.StringVar(&username, "l", "", "ssh username")
 	flag.IntVar(&port, "p", 0, "ssh port")
 	flag.Parse()
+
+	if *nVersionFlag {
+		fmt.Printf("nsync ssh version %v\n", version)
+		os.Exit(0)
+	}
 
 	if username == "" || port == 0 {
 		showUsage()
