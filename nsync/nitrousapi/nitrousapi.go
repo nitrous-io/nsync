@@ -19,7 +19,10 @@ type NitrousAPI struct {
 
 const httpClientTimeout = 10 * time.Second
 
-var ErrContainerNotRunning = errors.New("container is not running")
+var (
+	ErrContainerNotRunning = errors.New("container is not running")
+	ErrNoSSHUrl            = errors.New("SSH URL is unavailable: container does not expose port 22")
+)
 
 func NewNitrousAPI(token, host string) *NitrousAPI {
 	return &NitrousAPI{token: token, host: host, httpClient: &http.Client{Timeout: httpClientTimeout}}
@@ -59,9 +62,13 @@ func (na *NitrousAPI) GetContainerInfo(containerSlug string) (hostId int64, sshU
 			}
 		}
 
+		// SSH Url can be empty when 22 port is not open or user is on free plan
 		if v, ok := container["ssh_url"].(string); ok {
 			sshUrl = v
+		} else {
+			return 0, "", ErrNoSSHUrl
 		}
+
 		if v, ok := container["host_id"].(float64); ok {
 			hostId = int64(v)
 		}
