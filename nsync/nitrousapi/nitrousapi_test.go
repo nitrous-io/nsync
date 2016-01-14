@@ -73,7 +73,17 @@ var _ = Describe("nsync/nitrousapi", func() {
 			client.SetHttpClient(httpClient)
 
 			_, _, err := client.GetContainerInfo("container-slug")
-			Expect(err).To(HaveOccurred())
+			Expect(err).To(MatchError(nitrousapi.ErrContainerNotRunning))
+		})
+
+		It("returns error when ssh url is empty", func() {
+			httpServer, httpClient := runServerAndGetClient(`{"container": {"host_id": 1234, "state": "running"}}`, http.StatusOK)
+			defer httpServer.Close()
+
+			client.SetHttpClient(httpClient)
+
+			_, _, err := client.GetContainerInfo("container-slug")
+			Expect(err).To(MatchError(nitrousapi.ErrNoSSHUrl))
 		})
 	})
 

@@ -170,7 +170,6 @@ func NewSync(nitrousAPI *nitrousapi.NitrousAPI, token, sshKeyPath, nitrousFolder
 
 	hostId, sshUrl, err := nitrousAPI.GetContainerInfo(s.containerSlug)
 	if err != nil {
-		logger.Errorf("Failed to get container info: %+v", err)
 		return nil, err
 	}
 
