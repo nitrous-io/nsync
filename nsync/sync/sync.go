@@ -206,12 +206,14 @@ func (s *Sync) Start() {
 			go func() {
 				s.fileSyncLock.Lock()
 				defer s.fileSyncLock.Unlock()
+				startTime := time.Now()
 				s.publishMessage("container.sync-started", nil)
 				s.performSync()
 				s.syncingLock.Lock()
 				s.syncing = false
 				s.syncingLock.Unlock()
 				s.publishMessage("container.sync-finished", nil)
+				logger.Debugf("sync took: %v", time.Since(startTime))
 			}()
 		}
 		s.syncingLock.Unlock()
@@ -280,10 +282,12 @@ func (s *Sync) Start() {
 
 				logger.Debugf("changes: %+v", change)
 				if change.Event() == notify.Write && !strings.HasSuffix(changedPath, unisonTempfileExtension) {
-					logger.Debugf("upload: started (%s)", changedPath)
 					s.fileSyncLock.Lock()
+					logger.Debugf("upload: started (%s)", changedPath)
+					s.publishMessage("container.sync-started", nil)
 					if err := s.UploadFile(changedPath); err != nil {
 						s.fileSyncLock.Unlock()
+						s.publishMessage("container.sync-finished", nil)
 						logger.Debugf("upload: failed (%s)", changedPath)
 						if err == errNotFullySynced {
 							logger.Warnf("Failed to upload %s with %s event before sync because sync is are not done yet", changedPath, change.Event().String())
@@ -295,6 +299,7 @@ func (s *Sync) Start() {
 						break
 					}
 					s.fileSyncLock.Unlock()
+					s.publishMessage("container.sync-finished", nil)
 					logger.Debugf("upload: finished (%s)", changedPath)
 				} else {
 					handleChange(changedPath, true)
@@ -464,16 +469,16 @@ func (s *Sync) unisonCmd() *exec.Cmd {
 	}
 
 	args := []string{
-		s.localPath,              // path to watch
-		sshRemotePath,            // ssh remote path
-		"-auto=true",             // automatically accept default actions
-		"-batch=true",            // don't ask questions
-		"-dumbtty=true",          // no fancy terminal updates
-		"-confirmbigdel=false",   // don't ask about whole-replica deletes
-		"-confirmmerge=false",    // don't ask before committing a merge
-		"-log=false",             // don't log to file
-		"-perms=777",             // synchronize all permissions
-		"-prefer", sshRemotePath, // prefer server's copy when there is a conflict
+		s.localPath,            // path to watch
+		sshRemotePath,          // ssh remote path
+		"-auto=true",           // automatically accept default actions
+		"-batch=true",          // don't ask questions
+		"-dumbtty=true",        // no fancy terminal updates
+		"-confirmbigdel=false", // don't ask about whole-replica deletes
+		"-confirmmerge=false",  // don't ask before committing a merge
+		"-log=false",           // don't log to file
+		"-perms=777",           // synchronize all permissions
+		"-prefer", s.localPath, // prefer server's copy when there is a conflict
 		"-rsrc=false",                          // don't sync resource forks
 		"-servercmd=/nitrous/nitrous-unison",   // location of unison binary on server
 		"-sshargs", strings.Join(sshArgs, " "), // arguments to ssh command
@@ -590,6 +595,21 @@ func (s *Sync) UploadSyncIgnore() error {
 }
 
 func (s *Sync) UploadFile(path string) error {
+	startTime := time.Now()
+	if err := s.uploadWithSftp(path); err != nil {
+		return err
+	}
+	logger.Debugf("upload took: %v", time.Since(startTime))
+	return nil
+}
+
+func (s *Sync) uploadWithSftp(path string) error {
+	localFile, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer localFile.Close()
+
 	client, err := s.getSFTPClient()
 	if err != nil {
 		return err
@@ -619,12 +639,6 @@ func (s *Sync) UploadFile(path string) error {
 		return err
 	}
 	defer remoteFile.Close()
-
-	localFile, err := os.Open(path)
-	if err != nil {
-		return err
-	}
-	defer localFile.Close()
 
 	if _, err := io.Copy(remoteFile, localFile); err != nil {
 		return err
