@@ -33,6 +33,10 @@ func SetLogLevel(l string) {
 	}
 }
 
+func IsValidLogLevel(l string) bool {
+	return l == "error" || l == "warn" || l == "info" || l == "debug"
+}
+
 func Start() {
 	for {
 		select {
