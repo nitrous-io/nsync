@@ -1,14 +1,17 @@
 package nsync_test
 
 import (
+	"io"
 	"io/ioutil"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/gorilla/mux"
 	"github.com/nitrous-io/nsync/nsync"
+	"github.com/nitrous-io/nsync/pkg/logger"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 )
@@ -27,15 +30,29 @@ var _ = Describe("nsync/server", func() {
 		svr     *nsync.Server
 	)
 
-	newRequest := func(method string, urlStr string, params *url.Values) (*http.Request, error) {
+	newRequest := func(method string, urlStr string, params *url.Values) *http.Request {
 		u, err := url.Parse(urlStr)
-		if err != nil {
-			return nil, err
+		Expect(err).NotTo(HaveOccurred())
+
+		if method == "GET" {
+			if params != nil {
+				u.RawQuery = params.Encode()
+			}
+			req, err := http.NewRequest(method, u.String(), nil)
+			Expect(err).NotTo(HaveOccurred())
+			return req
+		} else {
+			var encodedData io.Reader
+			if params != nil {
+				encodedData = strings.NewReader(params.Encode())
+			}
+			req, err := http.NewRequest(method, u.String(), encodedData)
+			Expect(err).NotTo(HaveOccurred())
+
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			return req
 		}
-		if params != nil {
-			u.RawQuery = params.Encode()
-		}
-		return http.NewRequest(method, u.String(), nil)
+
 	}
 
 	BeforeEach(func() {
@@ -75,8 +92,7 @@ var _ = Describe("nsync/server", func() {
 			data.Set("token", "token")
 			data.Set("nitrousPath", "nitrousPath")
 
-			req, err := newRequest("POST", "/init", data)
-			Expect(err).To(BeNil())
+			req := newRequest("POST", "/init", data)
 
 			handler.ServeHTTP(res, req)
 			Expect(res.Code).To(Equal(http.StatusForbidden))
@@ -89,8 +105,7 @@ var _ = Describe("nsync/server", func() {
 
 	Describe("POST /containers/{slug}/tunnel/start", func() {
 		It("responds with 403 if it is not initialized", func() {
-			req, err = newRequest("POST", "/containers/test-container/tunnel/start", nil)
-			Expect(err).To(BeNil())
+			req = newRequest("POST", "/containers/test-container/tunnel/start", nil)
 
 			handler.ServeHTTP(res, req)
 			Expect(res.Code).To(Equal(http.StatusForbidden))
@@ -103,8 +118,7 @@ var _ = Describe("nsync/server", func() {
 		It("responds with 403 if arguments are not fulfilled", func() {
 			svr.SetSSHInfo("token", "nitrous-path", "ssh-key-path", "key")
 
-			req, err = newRequest("POST", "/containers/test-container/tunnel/start", nil)
-			Expect(err).To(BeNil())
+			req = newRequest("POST", "/containers/test-container/tunnel/start", nil)
 
 			handler.ServeHTTP(res, req)
 			Expect(res.Code).To(Equal(http.StatusForbidden))
@@ -120,8 +134,7 @@ var _ = Describe("nsync/server", func() {
 			data := &url.Values{}
 			data.Set("ports", ",,")
 
-			req, err = newRequest("POST", "/containers/test-container/tunnel/start", data)
-			Expect(err).To(BeNil())
+			req = newRequest("POST", "/containers/test-container/tunnel/start", data)
 
 			handler.ServeHTTP(res, req)
 			Expect(res.Code).To(Equal(http.StatusForbidden))
@@ -134,8 +147,7 @@ var _ = Describe("nsync/server", func() {
 
 	Describe("POST /containers/{slug}/sync/start", func() {
 		It("responds with 403 if it is not initialized", func() {
-			req, err = newRequest("POST", "/containers/test-container/sync/start", nil)
-			Expect(err).To(BeNil())
+			req = newRequest("POST", "/containers/test-container/sync/start", nil)
 
 			handler.ServeHTTP(res, req)
 			Expect(res.Code).To(Equal(http.StatusForbidden))
@@ -148,8 +160,7 @@ var _ = Describe("nsync/server", func() {
 		It("responds with 403 if arguments are not fulfilled", func() {
 			svr.SetSSHInfo("token", "nitrous-path", "ssh-key-path", "key")
 
-			req, err = newRequest("POST", "/containers/test-container/sync/start", nil)
-			Expect(err).To(BeNil())
+			req = newRequest("POST", "/containers/test-container/sync/start", nil)
 
 			handler.ServeHTTP(res, req)
 			Expect(res.Code).To(Equal(http.StatusForbidden))
@@ -162,8 +173,7 @@ var _ = Describe("nsync/server", func() {
 
 	Describe("POST /containers/{slug}/sync/stop", func() {
 		It("responds with 403 if it is not initialized", func() {
-			req, err = newRequest("POST", "/containers/test-container/sync/stop", nil)
-			Expect(err).To(BeNil())
+			req = newRequest("POST", "/containers/test-container/sync/stop", nil)
 
 			handler.ServeHTTP(res, req)
 			Expect(res.Code).To(Equal(http.StatusForbidden))
@@ -176,8 +186,7 @@ var _ = Describe("nsync/server", func() {
 
 	Describe("POST /containers/{slug}/upload", func() {
 		It("responds with 403 if it is not initialized", func() {
-			req, err = newRequest("POST", "/containers/test-container/upload", nil)
-			Expect(err).To(BeNil())
+			req = newRequest("POST", "/containers/test-container/upload", nil)
 
 			handler.ServeHTTP(res, req)
 			Expect(res.Code).To(Equal(http.StatusForbidden))
@@ -189,8 +198,7 @@ var _ = Describe("nsync/server", func() {
 
 		It("responds with 400 if file path is not specified", func() {
 			svr.SetSSHInfo("token", "nitrous-path", "ssh-key-path", "key")
-			req, err = newRequest("POST", "/containers/test-container/upload", nil)
-			Expect(err).To(BeNil())
+			req = newRequest("POST", "/containers/test-container/upload", nil)
 
 			handler.ServeHTTP(res, req)
 			Expect(res.Code).To(Equal(http.StatusBadRequest))
@@ -206,8 +214,7 @@ var _ = Describe("nsync/server", func() {
 			data := &url.Values{}
 			data.Set("path", "/home/nitrous/.ssh/id_rsa")
 
-			req, err = newRequest("POST", "/containers/test-container/upload", data)
-			Expect(err).To(BeNil())
+			req = newRequest("POST", "/containers/test-container/upload", data)
 
 			handler.ServeHTTP(res, req)
 			Expect(res.Code).To(Equal(http.StatusInternalServerError))
@@ -220,8 +227,7 @@ var _ = Describe("nsync/server", func() {
 
 	Describe("POST /containers/{slug}/register_ssh_key", func() {
 		It("responds with 403 if it is not initialized", func() {
-			req, err = newRequest("POST", "/containers/test-container/register_ssh_key", nil)
-			Expect(err).To(BeNil())
+			req = newRequest("POST", "/containers/test-container/register_ssh_key", nil)
 
 			handler.ServeHTTP(res, req)
 			Expect(res.Code).To(Equal(http.StatusForbidden))
@@ -229,6 +235,56 @@ var _ = Describe("nsync/server", func() {
 			message, err := ioutil.ReadAll(res.Body)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(string(message)).To(Equal(`{"error": "token is required"}`))
+		})
+	})
+
+	Describe("PUT /settings", func() {
+		var orgLogLevel logger.Level
+		BeforeEach(func() {
+			orgLogLevel = logger.LogLevel
+		})
+
+		AfterEach(func() {
+			logger.LogLevel = orgLogLevel
+		})
+
+		It("responds with 403 if does not have level parameter", func() {
+			req = newRequest("PUT", "/settings", nil)
+
+			handler.ServeHTTP(res, req)
+			Expect(res.Code).To(Equal(http.StatusForbidden))
+
+			message, err := ioutil.ReadAll(res.Body)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(message)).To(Equal(`{"error": "arguments are not sufficient"}`))
+		})
+
+		It("responds with 403 if does not have valid level parameter", func() {
+			data := &url.Values{}
+			data.Set("log_level", "whatsup")
+
+			req = newRequest("PUT", "/settings", data)
+
+			handler.ServeHTTP(res, req)
+			Expect(res.Code).To(Equal(http.StatusForbidden))
+
+			message, err := ioutil.ReadAll(res.Body)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(message)).To(Equal(`{"error": "invalid log level value"}`))
+		})
+
+		It("updates log level", func() {
+			logger.SetLogLevel("error")
+
+			data := &url.Values{}
+			data.Set("log_level", "debug")
+
+			req = newRequest("PUT", "/settings", data)
+
+			handler.ServeHTTP(res, req)
+			Expect(res.Code).To(Equal(http.StatusOK))
+
+			Expect(logger.LogLevel).To(Equal(logger.DebugLevel))
 		})
 	})
 })

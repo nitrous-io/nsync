@@ -309,6 +309,26 @@ func (s *Server) registerSSHKey(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(`{"status": "OK"}`))
 }
 
+func (s *Server) updateSettings(w http.ResponseWriter, r *http.Request) {
+	logLevel := r.FormValue("log_level")
+	if logLevel == "" {
+		w.WriteHeader(http.StatusForbidden)
+		w.Write([]byte(`{"error": "arguments are not sufficient"}`))
+		return
+	}
+
+	if !logger.IsValidLogLevel(logLevel) {
+		w.WriteHeader(http.StatusForbidden)
+		w.Write([]byte(`{"error": "invalid log level value"}`))
+		return
+	}
+
+	logger.SetLogLevel(logLevel)
+
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(`{"status": "OK"}`))
+}
+
 func NewServer(stopCh chan struct{}) *Server {
 	server := &Server{}
 	server.stopCh = stopCh
@@ -325,6 +345,7 @@ func NewServer(stopCh chan struct{}) *Server {
 	r.HandleFunc("/containers/{slug}/sync/stop", server.stopSync).Methods("POST")
 	r.HandleFunc("/containers/{slug}/upload", server.uploadFile).Methods("POST")
 	r.HandleFunc("/containers/{slug}/register_ssh_key", server.registerSSHKey).Methods("POST")
+	r.HandleFunc("/settings", server.updateSettings).Methods("PUT")
 	r.HandleFunc("/debug/pprof/{path:.*}", pprof.Index)
 
 	server.router = r
