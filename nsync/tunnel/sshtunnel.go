@@ -39,9 +39,11 @@ type SSHTunnel struct {
 	sshHost       string
 	sshConfig     *ssh.ClientConfig
 	ports         []Port
-	lock          *sync.Mutex
 
-	listeners []net.Listener
+	listenersLock sync.Mutex
+	listeners     []net.Listener
+
+	stateLock sync.Mutex
 	state     string
 }
 
@@ -51,7 +53,7 @@ func NewSSHTunnel(containerSlug, sshHost string, sshConfig *ssh.ClientConfig, po
 	sshTunnel.sshHost = sshHost
 	sshTunnel.sshConfig = sshConfig
 	sshTunnel.ports = ports
-	sshTunnel.lock = &sync.Mutex{}
+	sshTunnel.state = "stopped"
 
 	return sshTunnel
 }
@@ -59,8 +61,9 @@ func NewSSHTunnel(containerSlug, sshHost string, sshConfig *ssh.ClientConfig, po
 func (st *SSHTunnel) Start() error {
 	logger.Infof("Start forwarding: %+v", st.ports)
 
-	st.lock.Lock()
-	defer st.lock.Unlock()
+	st.listenersLock.Lock()
+	defer st.listenersLock.Unlock()
+
 	sshClient, err := ssh.Dial("tcp", st.sshHost, st.sshConfig)
 	if err != nil {
 		logger.Errorf("Failed to ssh.Dial: %v", err)
@@ -91,18 +94,21 @@ func (st *SSHTunnel) Start() error {
 			for {
 				localConn, err := listener.Accept()
 				if err != nil {
-					if st.state != "stopped" {
-						logger.Errorf("Failed to listen.Accept failed: %s", err)
-						st.stop()
-					}
+					logger.Warnf("Failed to listen.Accept: %s", err)
+					st.stop()
 					return
 				}
 
 				go func(localConn net.Conn) {
 					stream, err := sshClient.Dial("tcp", remoteAddress)
 					if err != nil {
-						logger.Errorf("Failed to sshClientConn.Dial with %s failed: %s", remoteAddress, err)
-						st.stop()
+						if e, ok := err.(*net.OpError); ok && e.Err.(*os.SyscallError).Err == syscall.ETIMEDOUT {
+							logger.Errorf("Stopping tunneling due to failure on sshClientConn.Dial to %s: %s", remoteAddress, err)
+							st.stop()
+						} else {
+							logger.Warnf("Failed to sshClientConn.Dial to %s: %s", remoteAddress, err)
+						}
+
 						return
 					}
 
@@ -112,25 +118,32 @@ func (st *SSHTunnel) Start() error {
 		}()
 	}
 
+	st.stateLock.Lock()
 	st.state = "running"
+	st.stateLock.Unlock()
 	st.publishStartEvent()
 
 	return nil
 }
 
 func (st *SSHTunnel) Stop() {
-	st.lock.Lock()
-	defer st.lock.Unlock()
+	st.listenersLock.Lock()
+	defer st.listenersLock.Unlock()
 	st.stop()
-	st.state = "stopped"
-	st.publishStopEvent(nil)
 }
 
 func (st *SSHTunnel) stop() {
 	for i := 0; i < len(st.listeners); i++ {
-		logger.Debugf("closing %+v\n", st.listeners[i])
 		st.listeners[i].Close()
 	}
+
+	// Don't publish "stopped" event when tunneling was not running
+	st.stateLock.Lock()
+	if st.state == "running" {
+		st.state = "stopped"
+		st.publishStopEvent(nil)
+	}
+	st.stateLock.Unlock()
 }
 
 func pipe(src io.ReadWriteCloser, dst io.ReadWriteCloser) {
