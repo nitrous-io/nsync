@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"net/http/pprof"
 	"os"
-	"os/user"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -20,6 +19,7 @@ import (
 	"github.com/nitrous-io/nsync/pkg/httpserver"
 	"github.com/nitrous-io/nsync/pkg/logger"
 	"github.com/nitrous-io/nsync/pkg/sshconfig"
+	"github.com/nitrous-io/nsync/pkg/userinfo"
 )
 
 const START_PORT = 64876
@@ -96,6 +96,7 @@ func (s *Server) init(w http.ResponseWriter, r *http.Request) {
 	s.nitrousAPI = nitrousapi.NewNitrousAPI(token, nitrousHost)
 	s.sshKeyPath, s.pubKey, err = InitSSHInfo(s.nitrousAPI, nitrousPath)
 	if err != nil {
+		logger.Errorf("failed to init ssh info: %v", err)
 		w.WriteHeader(http.StatusInternalServerError)
 		w.Write([]byte(`{"error": "failed to initialize"}`))
 		return
@@ -446,10 +447,10 @@ func (s *Server) isInitialized() bool {
 }
 
 func getDefaultNitrousPath() (string, error) {
-	u, err := user.Current()
+	home, err := userinfo.CurrentHomeFolder()
 	if err != nil {
 		return "", err
 	}
 
-	return filepath.Join(u.HomeDir, "Nitrous"), nil
+	return filepath.Join(home, "Nitrous"), nil
 }

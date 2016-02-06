@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
-	"os/user"
 	"path/filepath"
 	"strings"
 
@@ -15,6 +14,7 @@ import (
 
 	"github.com/nitrous-io/nsync/nsync/nitrousapi"
 	"github.com/nitrous-io/nsync/pkg/sshkeygen"
+	"github.com/nitrous-io/nsync/pkg/userinfo"
 )
 
 var ErrInvalidPublicKey = errors.New("invalid public key")
@@ -38,7 +38,7 @@ func InitSSHInfo(nitrousAPI *nitrousapi.NitrousAPI, nitrousPath string) (string,
 func generateSSHKeyPairIfAbsent(sshKeyPath string) (pubKey string, err error) {
 	pubKeyPath := sshKeyPath + ".pub"
 
-	u, err := user.Current()
+	username, err := userinfo.CurrentUsername()
 	if err != nil {
 		return "", err
 	}
@@ -48,7 +48,7 @@ func generateSSHKeyPairIfAbsent(sshKeyPath string) (pubKey string, err error) {
 		return "", err
 	}
 
-	name := fmt.Sprintf("%s@%s.desktop.nitrous.io", u.Username, hostname)
+	name := fmt.Sprintf("%s@%s.desktop.nitrous.io", username, hostname)
 
 	if err := os.MkdirAll(filepath.Dir(sshKeyPath), 0700); err != nil {
 		return "", err
