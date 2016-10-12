@@ -3,14 +3,16 @@
 // found in the LICENSE file.
 
 // +build !darwin,!linux,!freebsd,!dragonfly,!netbsd,!openbsd,!windows
-// +build !kqueue
+// +build !kqueue,!solaris
 
 package notify
 
+import "errors"
+
 type stub struct{ error }
 
-// NewWatcher stub.
-func newWatcher(chan<- EventInfo) stub {
+// newWatcher stub.
+func newWatcher(chan<- EventInfo) watcher {
 	return stub{errors.New("notify: not implemented")}
 }
 
